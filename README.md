@@ -21,7 +21,7 @@ between plugins, and no requirement to use more than one.
 
 ## Categories
 
-`dispatcher-manager/`
+`manager/`
 : Tools and interfaces for operators and systems that interact with dispatcher
   via the HTTP API or the CLI. Includes browser-based API interfaces, client
   libraries, collection files for HTTP tools, and CLI wrappers.
@@ -39,7 +39,7 @@ between plugins, and no requirement to use more than one.
 
 Full documentation for each category is in its own guide:
 
-- [dispatcher-manager/README.md](dispatcher-manager/README.md)
+- [manager/README.md](manager/README.md)
 - [agent-scripts/README.md](agent-scripts/README.md)
 - [auth/README.md](auth/README.md)
 

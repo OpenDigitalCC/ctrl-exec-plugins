@@ -39,26 +39,26 @@ The `auth-failures` subcommand falls back to `/var/log/auth.log` if
 Copy the script to the agent host and add entries to `scripts.conf`:
 
 ```bash
-sudo cp linux-audit.sh /opt/dispatcher-scripts/
-sudo chmod 750 /opt/dispatcher-scripts/linux-audit.sh
-sudo chown root:dispatcher-agent /opt/dispatcher-scripts/linux-audit.sh
+sudo cp linux-audit.sh /opt/ctrl-exec-scripts/
+sudo chmod 750 /opt/ctrl-exec-scripts/linux-audit.sh
+sudo chown root:ctrl-exec-agent /opt/ctrl-exec-scripts/linux-audit.sh
 ```
 
-Then add the entry to `/etc/dispatcher-agent/scripts.conf` and reload
+Then add the entry to `/etc/ctrl-exec-agent/scripts.conf` and reload
 (see scripts.conf section below).
 
 ## scripts.conf
 
-Add to `/etc/dispatcher-agent/scripts.conf` on each agent host:
+Add to `/etc/ctrl-exec-agent/scripts.conf` on each agent host:
 
 ```ini
-linux-audit = /opt/dispatcher-scripts/linux-audit.sh
+linux-audit = /opt/ctrl-exec-scripts/linux-audit.sh
 ```
 
 Reload the allowlist without restarting the agent:
 
 ```bash
-kill -HUP $(pgrep -f dispatcher-agent)
+kill -HUP $(pgrep -f ctrl-exec-agent)
 ```
 
 ## Subcommands
@@ -103,20 +103,20 @@ All subcommands are passed as the first argument after `--`.
 
 ```bash
 # Check disk usage on a single host
-dispatcher run web-01 linux-audit -- disk
+ced run web-01 linux-audit -- disk
 
 # Check listening ports on multiple hosts in parallel
-dispatcher run web-01 web-02 db-01 linux-audit -- ports
+ced run web-01 web-02 db-01 linux-audit -- ports
 
 # Full audit of a single host
-dispatcher run db-01 linux-audit -- all
+ced run db-01 linux-audit -- all
 
 # JSON output for scripted consumption
-dispatcher run web-01 linux-audit --json -- services
+ced run web-01 linux-audit --json -- services
 
 # Run the script directly on the agent host (for testing)
-/opt/dispatcher-scripts/linux-audit.sh disk
-/opt/dispatcher-scripts/linux-audit.sh all
+/opt/ctrl-exec-scripts/linux-audit.sh disk
+/opt/ctrl-exec-scripts/linux-audit.sh all
 ```
 
 ## Limitations
@@ -129,7 +129,7 @@ dispatcher run web-01 linux-audit --json -- services
   services will not show a complete list.
 - `auth-failures` on non-systemd hosts reads `/var/log/auth.log` directly.
   The agent process must have read access to this file; on some systems
-  this requires adding `dispatcher-agent` to the `adm` group:
-  `usermod -aG adm dispatcher-agent`.
+  this requires adding `ctrl-exec-agent` to the `adm` group:
+  `usermod -aG adm ctrl-exec-agent`.
 - All subcommands reflect the state at the moment of execution. There is
   no historical comparison or trending.

@@ -13,7 +13,7 @@ our $VERSION = '0.1.0';
 # ---------------------------------------------------------------------------
 
 my $DEFAULT_URL = 'http://localhost:7445';
-my $CONFIG_FILE = "$ENV{HOME}/.dispatcher-manager.conf";
+my $CONFIG_FILE = "/root/.ctrl-exec-cli.conf";
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -36,7 +36,7 @@ sub main {
     );
 
     if ($global{version}) {
-        print "dispatcher-manager $VERSION\n";
+        print "ctrl-exec-cli $VERSION\n";
         exit 0;
     }
 
@@ -64,7 +64,7 @@ sub main {
     );
 
     my $handler = $commands{$cmd}
-        or die "Unknown command '$cmd'\nRun dispatcher-manager --help for usage.\n";
+        or die "Unknown command '$cmd'\nRun ctrl-exec-cli --help for usage.\n";
 
     $handler->($ctx, @ARGV);
 }
@@ -449,7 +449,7 @@ sub api_post {
 
 sub _make_ua {
     return HTTP::Tiny->new(
-        agent   => "dispatcher-manager/$VERSION",
+        agent   => "ctrl-exec-cli/$VERSION",
         timeout => 120,
     );
 }
@@ -496,15 +496,15 @@ sub build_context {
 
     # Priority: flag > env > config file > default
     my $url = $opts->{url}
-        // $ENV{DISPATCHER_API_URL}
+        // $ENV{CTRL_EXEC_API_URL}
         // $cfg->{url}
         // $DEFAULT_URL;
     $url =~ s{/+$}{};
 
     return {
         url      => $url,
-        token    => $opts->{token}    // $ENV{DISPATCHER_TOKEN}    // $cfg->{token}    // '',
-        username => $opts->{username} // $ENV{DISPATCHER_USERNAME} // $cfg->{username} // $ENV{USER} // '',
+        token    => $opts->{token}    // $ENV{CTRL_EXEC_TOKEN}    // $cfg->{token}    // '',
+        username => $opts->{username} // $ENV{CTRL_EXEC_USERNAME} // $cfg->{username} // $ENV{USER} // '',
         json     => $opts->{json} // 0,
     };
 }
@@ -525,10 +525,10 @@ sub die_error {
 # ---------------------------------------------------------------------------
 
 sub usage_main { return <<'END';
-dispatcher-manager - CLI client for the dispatcher HTTP API
+ctrl-exec-cli - CLI client for the dispatcher HTTP API
 
 Usage:
-  dispatcher-manager [global options] <command> [command options] [args]
+  ctrl-exec-cli [global options] <command> [command options] [args]
 
 Commands:
   health                      Check API server liveness and version
@@ -539,13 +539,13 @@ Commands:
 
 Global options:
   --url <url>         API base URL (default: http://localhost:7445)
-  --token <token>     Auth token (overrides DISPATCHER_TOKEN)
-  --username <name>   Username (overrides DISPATCHER_USERNAME, default: $USER)
+  --token <token>     Auth token (overrides CTRL_EXEC_TOKEN)
+  --username <name>   Username (overrides CTRL_EXEC_USERNAME, default: $USER)
   --json              Raw JSON output (applies to all commands)
   --version           Print version and exit
   --help              Print this help and exit
 
-Config file (~/.dispatcher-manager.conf):
+Config file (~/.ctrl-exec-cli.conf):
   url      = http://myhost:7445
   token    = mytoken
   username = alice
@@ -553,29 +553,29 @@ Config file (~/.dispatcher-manager.conf):
 Priority: flag > environment variable > config file > default
 
 Environment variables:
-  DISPATCHER_API_URL    API base URL
-  DISPATCHER_TOKEN      Auth token
-  DISPATCHER_USERNAME   Username
+  CTRL_EXEC_API_URL    API base URL
+  CTRL_EXEC_TOKEN      Auth token
+  CTRL_EXEC_USERNAME   Username
 
-Run 'dispatcher-manager <command> --help' for command-specific help.
+Run 'ctrl-exec-cli <command> --help' for command-specific help.
 END
 }
 
 sub usage_health { return <<'END';
-Usage: dispatcher-manager health [--json]
+Usage: ctrl-exec-cli health [--json]
 
 Check API server liveness and version. No authentication required.
 
   --json    Raw JSON output
 
 Examples:
-  dispatcher-manager health
-  dispatcher-manager health --json
+  ctrl-exec-cli health
+  ctrl-exec-cli health --json
 END
 }
 
 sub usage_ping { return <<'END';
-Usage: dispatcher-manager ping [--json] <host> [host...]
+Usage: ctrl-exec-cli ping [--json] <host> [host...]
 
   <host>    Agent hostname or hostname:port (port defaults to 7443)
   --json    Raw JSON output
@@ -583,15 +583,15 @@ Usage: dispatcher-manager ping [--json] <host> [host...]
 Output columns: HOST  STATUS  RTT  CERT EXPIRY  VERSION
 
 Examples:
-  dispatcher-manager ping web-01
-  dispatcher-manager ping web-01 web-02 db-01
-  dispatcher-manager ping web-01:7450
-  dispatcher-manager ping web-01 --json
+  ctrl-exec-cli ping web-01
+  ctrl-exec-cli ping web-01 web-02 db-01
+  ctrl-exec-cli ping web-01:7450
+  ctrl-exec-cli ping web-01 --json
 END
 }
 
 sub usage_run { return <<'END';
-Usage: dispatcher-manager run [--async] [--json] <host> [host...] --script <n> [-- arg...]
+Usage: ctrl-exec-cli run [--async] [--json] <host> [host...] --script <n> [-- arg...]
 
   <host>           One or more agent hostnames (hostname or hostname:port)
   --script <n>  Allowlisted script name (required)
@@ -601,25 +601,25 @@ Usage: dispatcher-manager run [--async] [--json] <host> [host...] --script <n> [
 
 Without --async, blocks until all hosts complete and prints full results.
 With --async, prints only the reqid (one line) and exits 0. Use
-'dispatcher-manager status <reqid>' to retrieve the result later.
+'ctrl-exec-cli status <reqid>' to retrieve the result later.
 
 Exit codes (synchronous):
   0   All hosts succeeded (script exit 0 on all)
   1   One or more hosts failed, or dispatcher-side error
 
 Examples:
-  dispatcher-manager run web-01 --script deploy
-  dispatcher-manager run db-01 db-02 --script backup-mysql -- --database myapp
-  dispatcher-manager run web-01 web-02 --script check-disk --json
-  dispatcher-manager run db-01 --script pg-vacuum -- --full --analyse
-  dispatcher-manager run db-01 --script long-job --async
-  REQID=\$(dispatcher-manager run db-01 --script long-job --async)
-  dispatcher-manager status \$REQID
+  ctrl-exec-cli run web-01 --script deploy
+  ctrl-exec-cli run db-01 db-02 --script backup-mysql -- --database myapp
+  ctrl-exec-cli run web-01 web-02 --script check-disk --json
+  ctrl-exec-cli run db-01 --script pg-vacuum -- --full --analyse
+  ctrl-exec-cli run db-01 --script long-job --async
+  REQID=\$(ctrl-exec-cli run db-01 --script long-job --async)
+  ctrl-exec-cli status \$REQID
 END
 }
 
 sub usage_status { return <<'END';
-Usage: dispatcher-manager status [--json] <reqid>
+Usage: ctrl-exec-cli status [--json] <reqid>
 
   <reqid>   Request ID returned by a previous run
   --json    Raw JSON output
@@ -631,14 +631,14 @@ Output: reqid, script, hosts, completed timestamp, then per-host results
 in the same format as 'run'.
 
 Examples:
-  dispatcher-manager status a1b2c3d4
-  dispatcher-manager status a1b2c3d4 --json
-  dispatcher-manager status \$(dispatcher-manager run db-01 --script backup --async)
+  ctrl-exec-cli status a1b2c3d4
+  ctrl-exec-cli status a1b2c3d4 --json
+  ctrl-exec-cli status \$(ctrl-exec-cli run db-01 --script backup --async)
 END
 }
 
 sub usage_discovery { return <<'END';
-Usage: dispatcher-manager discovery [--scripts] [--json] [host...]
+Usage: ctrl-exec-cli discovery [--scripts] [--json] [host...]
 
   [host...]   Hostnames to filter results (default: all registered agents)
   --scripts   Show scripts for each host (verbose)
@@ -648,10 +648,10 @@ Output (default):  HOST  STATUS  VERSION  SCRIPTS (count)
 Output (--scripts): one block per host with script names and paths
 
 Examples:
-  dispatcher-manager discovery
-  dispatcher-manager discovery --scripts
-  dispatcher-manager discovery web-01 db-01
-  dispatcher-manager discovery --scripts web-01
-  dispatcher-manager discovery --json
+  ctrl-exec-cli discovery
+  ctrl-exec-cli discovery --scripts
+  ctrl-exec-cli discovery web-01 db-01
+  ctrl-exec-cli discovery --scripts web-01
+  ctrl-exec-cli discovery --json
 END
 }

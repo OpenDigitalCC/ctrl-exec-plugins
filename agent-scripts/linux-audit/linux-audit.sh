@@ -15,7 +15,7 @@
 #   linux-audit.sh <subcommand>
 #
 # Usage (via dispatcher):
-#   dispatcher run <host> linux-audit -- <subcommand>
+#   ced run <host> linux-audit -- <subcommand>
 
 set -euo pipefail
 
@@ -133,8 +133,8 @@ Subcommands:
   all             Run all subcommands in sequence
 
 Via dispatcher:
-  dispatcher run <host> linux-audit -- logins
-  dispatcher run <host> linux-audit -- all
+  ced run <host> linux-audit -- logins
+  ced run <host> linux-audit -- all
 EOF
     exit 1
 }

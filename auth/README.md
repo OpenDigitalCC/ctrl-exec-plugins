@@ -41,15 +41,15 @@ Use syslog for audit logging within the hook.
 Environment variables:
 
 ```
-DISPATCHER_ACTION      run | ping
-DISPATCHER_SCRIPT      script name (empty for ping)
-DISPATCHER_HOSTS       comma-separated host list
-DISPATCHER_ARGS        space-joined args
-DISPATCHER_ARGS_JSON   args as a JSON array string (use for arg inspection)
-DISPATCHER_USERNAME    username from request (may be empty)
-DISPATCHER_TOKEN       token from request (may be empty)
-DISPATCHER_SOURCE_IP   127.0.0.1 for CLI; caller IP for API
-DISPATCHER_TIMESTAMP   ISO 8601 UTC timestamp
+ENVEXEC_ACTION      run | ping
+ENVEXEC_SCRIPT      script name (empty for ping)
+ENVEXEC_HOSTS       comma-separated host list
+ENVEXEC_ARGS        space-joined args
+ENVEXEC_ARGS_JSON   args as a JSON array string (use for arg inspection)
+ENVEXEC_USERNAME    username from request (may be empty)
+ENVEXEC_TOKEN       token from request (may be empty)
+ENVEXEC_SOURCE_IP   127.0.0.1 for CLI; caller IP for API
+ENVEXEC_TIMESTAMP   ISO 8601 UTC timestamp
 ```
 
 stdin JSON (same fields, with hosts and args as arrays):
@@ -67,32 +67,32 @@ stdin JSON (same fields, with hosts and args as arrays):
 }
 ```
 
-The JSON form is preferred for inspection - use `DISPATCHER_ARGS_JSON` rather
-than `DISPATCHER_ARGS` when examining arguments, as the space-joined form is
+The JSON form is preferred for inspection - use `ENVEXEC_ARGS_JSON` rather
+than `ENVEXEC_ARGS` when examining arguments, as the space-joined form is
 ambiguous when args contain spaces.
 
 
 ## Installing a hook
 
 Place the hook executable on the dispatcher host and reference it in
-`dispatcher.conf`:
+`ctrl-exec.conf`:
 
 ```bash
-sudo cp my-auth-hook /etc/dispatcher/auth-hook
-sudo chmod 750 /etc/dispatcher/auth-hook
-sudo chown root:dispatcher /etc/dispatcher/auth-hook
+sudo cp my-auth-hook /etc/ctrl-exec/auth-hook
+sudo chmod 750 /etc/ctrl-exec/auth-hook
+sudo chown root:dispatcher /etc/ctrl-exec/auth-hook
 ```
 
-In `/etc/dispatcher/dispatcher.conf`:
+In `/etc/ctrl-exec/ctrl-exec.conf`:
 
 ```ini
-auth_hook = /etc/dispatcher/auth-hook
+auth_hook = /etc/ctrl-exec/auth-hook
 ```
 
 Restart the API service for the change to take effect:
 
 ```bash
-sudo systemctl restart dispatcher-api
+sudo systemctl restart ctrl-exec-api
 ```
 
 The CLI picks up the change immediately on the next invocation.
@@ -116,7 +116,7 @@ all others are denied with exit 2 (bad credentials).
 
 ```bash
 #!/bin/bash
-[[ "$DISPATCHER_TOKEN" == "mysecrettoken" ]] || exit 2
+[[ "$ENVEXEC_TOKEN" == "mysecrettoken" ]] || exit 2
 exit 0
 ```
 
@@ -128,9 +128,9 @@ a backup token may only call scripts whose names begin with `backup-`.
 
 ```bash
 #!/bin/bash
-case "$DISPATCHER_TOKEN" in
+case "$ENVEXEC_TOKEN" in
     backup-token)
-        [[ "$DISPATCHER_SCRIPT" == backup-* ]] || exit 3
+        [[ "$ENVEXEC_SCRIPT" == backup-* ]] || exit 3
         exit 0 ;;
     ops-token)
         exit 0 ;;
@@ -147,7 +147,7 @@ more than two arguments.
 
 ```bash
 #!/bin/bash
-ARG_COUNT=$(echo "$DISPATCHER_ARGS_JSON" \
+ARG_COUNT=$(echo "$ENVEXEC_ARGS_JSON" \
     | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
 [[ "$ARG_COUNT" -le 2 ]] || exit 3
 exit 0
@@ -161,7 +161,7 @@ to a specific subnet.
 
 ```bash
 #!/bin/bash
-case "$DISPATCHER_SOURCE_IP" in
+case "$ENVEXEC_SOURCE_IP" in
     127.0.0.1)        exit 0 ;;
     192.168.100.*)    exit 0 ;;
     *)                exit 1 ;;

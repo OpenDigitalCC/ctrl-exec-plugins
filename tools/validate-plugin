@@ -7,7 +7,7 @@
 # Examples:
 #   tools/validate-plugin agent-scripts/linux-audit
 #   tools/validate-plugin auth/htpasswd
-#   tools/validate-plugin dispatcher-manager/rapidoc
+#   tools/validate-plugin manager/rapidoc
 #
 # Exit codes:
 #   0   all checks passed
@@ -82,13 +82,13 @@ main() {
     case "$plugin_path" in
         agent-scripts/*) category="agent-scripts" ;;
         auth/*)          category="auth" ;;
-        dispatcher-manager/*) category="dispatcher-manager" ;;
+        manager/*) category="manager" ;;
         */agent-scripts/*) category="agent-scripts" ;;
         */auth/*)          category="auth" ;;
-        */dispatcher-manager/*) category="dispatcher-manager" ;;
+        */manager/*) category="manager" ;;
         *)
             echo "Error: cannot determine category from path '$plugin_path'" >&2
-            echo "  Path must contain agent-scripts/, auth/, or dispatcher-manager/" >&2
+            echo "  Path must contain agent-scripts/, auth/, or manager/" >&2
             exit 1
             ;;
     esac
@@ -126,7 +126,7 @@ main() {
                 check_heading "$readme" "Configuration"
                 check_heading "$readme" "Exit codes"
                 ;;
-            dispatcher-manager)
+            manager)
                 check_heading "$readme" "Configuration"
                 ;;
         esac
@@ -151,7 +151,7 @@ main() {
         auth)
             validate_auth_hook "$plugin_path" "$plugin_name"
             ;;
-        dispatcher-manager)
+        manager)
             validate_manager "$plugin_path" "$plugin_name"
             ;;
     esac

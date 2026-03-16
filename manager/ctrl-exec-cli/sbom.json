@@ -1,0 +1,22 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "ctrl-exec-cli-cli",
+      "version": "0.1.0",
+      "description": "Perl CLI client for the dispatcher HTTP API"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "perl",
+      "version": "5.38",
+      "description": "Perl interpreter and core modules (HTTP::Tiny, JSON::PP, Getopt::Long)",
+      "purl": "pkg:deb/debian/perl"
+    }
+  ]
+}

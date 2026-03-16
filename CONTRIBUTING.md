@@ -15,7 +15,7 @@ Read the category README for the category you are contributing to before
 starting. The interface contracts differ by category.
 
 - [agent-scripts/README.md](agent-scripts/README.md)
-- [dispatcher-manager/README.md](dispatcher-manager/README.md)
+- [manager/README.md](manager/README.md)
 - [auth/README.md](auth/README.md)
 
 
@@ -110,7 +110,7 @@ Auth hooks (`auth/`):
 ## Limitations
 ```
 
-Manager plugins (`dispatcher-manager/`):
+Manager plugins (`manager/`):
 
 ```
 ## Purpose
@@ -157,7 +157,7 @@ leaves background processes running creates operational problems.
 
 Exit codes must be exactly 0, 1, 2, or 3. No output on stdout or stderr.
 
-### dispatcher-manager
+### ctrl-exec-cli
 
 Manager plugins consume the dispatcher HTTP API. Do not hardcode hostnames
 or script names - use `GET /openapi-live.json` or `GET /discovery` for
@@ -176,7 +176,7 @@ validator is at `tools/validate-plugin` in the repository root.
 ```bash
 tools/validate-plugin agent-scripts/my-plugin
 tools/validate-plugin auth/my-hook
-tools/validate-plugin dispatcher-manager/my-manager
+tools/validate-plugin manager/my-manager
 ```
 
 The validator checks:

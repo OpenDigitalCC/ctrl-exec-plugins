@@ -1,41 +1,43 @@
 ---
-title: dispatcher-plugins - dispatcher-manager
-subtitle: Interfaces and clients for the dispatcher HTTP API
+title: ctrl-exec-plugins - manager
+subtitle: Interfaces and clients for the ctrl-exec HTTP API
 brand: odcc
 ---
 
-# dispatcher-manager
+# manager
 
-Tools and interfaces for operators and systems that interact with dispatcher
+Tools and interfaces for operators and systems that interact with ctrl-exec
 via its HTTP API or CLI. This includes browser-based API interfaces, client
 libraries, collection files for HTTP tools, and CLI wrappers.
 
 
 ## How the API works
 
-`dispatcher-api` exposes the dispatcher's run, ping, and discovery operations
-as HTTP endpoints with JSON request and response bodies. It listens on port
+`ctrl-exec-api` exposes the run, ping, discovery, and status operations as
+HTTP endpoints with JSON request and response bodies. It listens on port
 7445 by default.
 
 The core endpoints are:
 
 ```
+GET  /                    Index of all endpoints
 GET  /health              Liveness check
 POST /ping                Test connectivity to one or more agents
 POST /run                 Run an allowlisted script on one or more agents
+GET  /status/{reqid}      Retrieve the stored result for a completed run
 GET  /discovery           List all registered agents and their scripts
 GET  /openapi.json        Static OpenAPI 3.1 specification
 GET  /openapi-live.json   Live spec augmented with discovered hosts and scripts
 ```
 
-A full endpoint reference is in `API.md` in the dispatcher repository. The
+A full endpoint reference is in `API.md` in the ctrl-exec repository. The
 OpenAPI spec served at `/openapi.json` is the authoritative interface
 definition.
 
 
 ## Interface contract
 
-All manager plugins consume the dispatcher HTTP API as documented in
+All manager plugins consume the ctrl-exec HTTP API as documented in
 `openapi.json` and `API.md`. The base URL, credentials, and TLS settings
 are provided by the operator at deployment time.
 
@@ -76,11 +78,14 @@ curl -s -X POST http://localhost:7445/run \
 
 # List all agents and their scripts
 curl -s http://localhost:7445/discovery
+
+# Retrieve a stored run result
+curl -s http://localhost:7445/status/a1b2c3d4
 ```
 
 The `reqid` field in a `/run` response matches the `REQID` in syslog on both
-the dispatcher and the agent. Use it to correlate API responses with log
-entries:
+the ctrl-exec dispatcher and the agent. Use it to correlate API responses with
+log entries:
 
 ```bash
 grep REQID=a1b2c3d4 /var/log/syslog
@@ -90,7 +95,7 @@ grep REQID=a1b2c3d4 /var/log/syslog
 ## Example: async pattern
 
 Long-running scripts should use the async pattern to avoid HTTP timeouts.
-Submit the job, note the `reqid`, then poll for the result:
+Submit the job, note the top-level `reqid`, then poll for the result:
 
 ```bash
 # Submit
@@ -99,28 +104,27 @@ REQID=$(curl -s -X POST http://localhost:7445/run \
   -d '{"hosts": ["db-01"], "script": "backup-mysql", "token": "mytoken"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['reqid'])")
 
-# Poll
+# Poll until complete
 curl -s "http://localhost:7445/status/${REQID}"
 ```
 
-The `/status/{reqid}` endpoint returns the result when the job completes, or
-a pending indicator while it is still running. Poll at a reasonable interval -
-every 5 seconds is appropriate for most scripts.
+Results are retained for 24 hours after the run completes. Poll at a
+reasonable interval - every 5 seconds is appropriate for most scripts.
 
 
 ## TLS and authentication
 
 If TLS is enabled on the API (`api_cert` and `api_key` set in
-`dispatcher.conf`), clients must trust the CA or present a cert from a
+`ctrl-exec.conf`), clients must trust the CA or present a cert from a
 public CA depending on how the server cert was issued.
 
 Authentication is entirely handled by the auth hook configured on the
-dispatcher host. Manager plugins pass credentials supplied by the operator -
+ctrl-exec host. Manager plugins pass credentials supplied by the operator -
 they do not implement their own access control.
 
 For any internet-facing deployment:
 
-- Implement a real auth hook on the dispatcher host
+- Implement a real auth hook on the ctrl-exec host
 - Consider placing the API behind a reverse proxy for TLS termination and
   IP allowlisting
 - Restrict `api_port` to localhost if only local clients need access
@@ -142,7 +146,8 @@ No embedded credentials
 
 Async awareness
 : Plugins that submit `/run` requests document the async pattern and the
-  polling strategy for long-running scripts.
+  polling strategy for long-running scripts. Include the recommended polling
+  interval and timeout strategy.
 
 British English in output and documentation
-: Consistent with the dispatcher project convention.
+: Consistent with the ctrl-exec project convention.

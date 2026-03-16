@@ -49,14 +49,14 @@ Copy the script to the agent host, set ownership and permissions, then add
 an entry to the allowlist:
 
 ```bash
-sudo cp my-script.sh /opt/dispatcher-scripts/
-sudo chmod 750 /opt/dispatcher-scripts/my-script.sh
-sudo chown root:dispatcher-agent /opt/dispatcher-scripts/my-script.sh
+sudo cp my-script.sh /opt/ctrl-exec-scripts/
+sudo chmod 750 /opt/ctrl-exec-scripts/my-script.sh
+sudo chown root:ctrl-exec-agent /opt/ctrl-exec-scripts/my-script.sh
 
-echo "my-script = /opt/dispatcher-scripts/my-script.sh" \
-    | sudo tee -a /etc/dispatcher-agent/scripts.conf
+echo "my-script = /opt/ctrl-exec-scripts/my-script.sh" \
+    | sudo tee -a /etc/ctrl-exec-agent/scripts.conf
 
-sudo systemctl kill --signal=HUP dispatcher-agent
+sudo systemctl kill --signal=HUP ctrl-exec-agent
 ```
 
 The `HUP` signal reloads the allowlist without restarting the agent or
@@ -133,10 +133,10 @@ British English in output and documentation
 ## File permissions on the agent host
 
 ```
-/opt/dispatcher-scripts/<script>.sh    0750  root:dispatcher-agent
+/opt/ctrl-exec-scripts/<script>.sh    0750  root:ctrl-exec-agent
 ```
 
-The `dispatcher-agent` service runs as root by default. Scripts that should
+The `ctrl-exec-agent` service runs as root by default. Scripts that should
 run as a less-privileged user can drop privileges explicitly:
 
 ```bash
@@ -146,5 +146,5 @@ exec sudo -u appuser "$0" "$@"
 Add a targeted sudoers rule to permit this without a password prompt:
 
 ```
-dispatcher-agent ALL=(appuser) NOPASSWD: /opt/dispatcher-scripts/my-script.sh
+ctrl-exec-agent ALL=(appuser) NOPASSWD: /opt/ctrl-exec-scripts/my-script.sh
 ```
