@@ -1,0 +1,266 @@
+#!/bin/bash
+# ce-file-transfer - Transfer files directly between two ctrl-exec agents
+#
+# Runs on the dispatcher host. Instructs the receiving agent to start
+# agent-file-receive, captures the cert fingerprint, then instructs the
+# sending agent to run agent-file-transfer pointing directly at the receiver.
+# No file data passes through the dispatcher host.
+#
+# Both agents must have their respective scripts installed and allowlisted.
+# The transfer port must be reachable from the sender agent to the receiver
+# agent - configure firewall rules accordingly.
+#
+# Requires:
+#   - agent-file-transfer installed on the sending agent
+#   - agent-file-receive installed on the receiving agent
+#   - curl and jq installed on the dispatcher host
+#   - CTRL_EXEC_API_URL set (or --api-url provided)
+#
+# Arguments:
+#   --from <agent>      Sending agent hostname (required)
+#   --to <agent>        Receiving agent hostname (required)
+#   --path <path>       Path or glob to collect from the sender (required)
+#   --output <path>     Destination path on the receiving agent (required)
+#   --port <n>          Transfer port - must be reachable from sender to receiver (required)
+#   --timeout <n>       Transfer timeout in seconds (default: 300)
+#   --api-url <url>     ctrl-exec API base URL (default: $CTRL_EXEC_API_URL)
+#   --token <token>     Auth token (default: $CTRL_EXEC_TOKEN)
+#   --username <n>      Username (default: $CTRL_EXEC_USERNAME or $USER)
+#
+# Environment:
+#   CTRL_EXEC_API_URL, CTRL_EXEC_TOKEN, CTRL_EXEC_USERNAME
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "Error: '$1' not found - install $2" >&2
+        exit 2
+    }
+}
+
+require_cmd curl curl
+require_cmd jq   jq
+
+# ---------------------------------------------------------------------------
+# Arguments
+# ---------------------------------------------------------------------------
+
+usage() {
+    cat >&2 <<EOF
+Usage: ce-file-transfer --from <agent> --to <agent> --path <path> --output <path> --port <n> [options]
+
+  --from <agent>      Sending agent hostname (required)
+  --to <agent>        Receiving agent hostname (required)
+  --path <path>       Path or glob to collect from the sender (required)
+  --output <path>     Destination path on the receiving agent (required)
+  --port <n>          Transfer port, must be reachable from sender to receiver (required)
+  --timeout <n>       Transfer timeout in seconds (default: 300)
+  --api-url <url>     ctrl-exec API base URL
+  --token <token>     Auth token
+  --username <n>      Username for auth hook
+
+Environment variables: CTRL_EXEC_API_URL, CTRL_EXEC_TOKEN, CTRL_EXEC_USERNAME
+EOF
+    exit 2
+}
+
+FROM_HOST=''
+TO_HOST=''
+COLLECT_PATH=''
+OUTPUT=''
+TRANSFER_PORT=''
+TIMEOUT=300
+API_URL="${CTRL_EXEC_API_URL:-http://localhost:7445}"
+TOKEN="${CTRL_EXEC_TOKEN:-}"
+USERNAME="${CTRL_EXEC_USERNAME:-${USER:-}}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --from)      FROM_HOST="${2:-}"; shift 2 ;;
+        --to)        TO_HOST="${2:-}"; shift 2 ;;
+        --path)      COLLECT_PATH="${2:-}"; shift 2 ;;
+        --output)    OUTPUT="${2:-}"; shift 2 ;;
+        --port)      TRANSFER_PORT="${2:-}"; shift 2 ;;
+        --timeout)   TIMEOUT="${2:-}"; shift 2 ;;
+        --api-url)   API_URL="${2:-}"; shift 2 ;;
+        --token)     TOKEN="${2:-}"; shift 2 ;;
+        --username)  USERNAME="${2:-}"; shift 2 ;;
+        --help|-h)   usage ;;
+        *) echo "Error: Unknown argument: $1" >&2; usage ;;
+    esac
+done
+
+[[ -n "$FROM_HOST" ]]     || { echo "Error: --from is required" >&2; usage; }
+[[ -n "$TO_HOST" ]]       || { echo "Error: --to is required" >&2; usage; }
+[[ -n "$COLLECT_PATH" ]]  || { echo "Error: --path is required" >&2; usage; }
+[[ -n "$OUTPUT" ]]        || { echo "Error: --output is required" >&2; usage; }
+[[ -n "$TRANSFER_PORT" ]] || { echo "Error: --port is required" >&2; usage; }
+[[ "$TRANSFER_PORT" =~ ^[0-9]+$ ]] || { echo "Error: --port must be numeric" >&2; exit 2; }
+
+API_URL="${API_URL%/}"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+api_run() {
+    local request="$1"
+    curl -s -X POST "${API_URL}/run" \
+        -H 'Content-Type: application/json' \
+        -d "$request"
+}
+
+api_status() {
+    local reqid="$1"
+    curl -s "${API_URL}/status/${reqid}"
+}
+
+poll_stdout_field() {
+    local reqid="$1" field="$2" wait_limit="$3"
+    local value='' start
+    start=$(date +%s)
+    while [[ -z "$value" ]]; do
+        local status agent_stdout
+        status=$(api_status "$reqid" 2>/dev/null || echo '{}')
+        agent_stdout=$(echo "$status" | jq -r '.results[0].stdout // ""')
+        value=$(echo "$agent_stdout" | grep "^${field}:" \
+            | head -1 | sed "s/${field}://") || true
+        if [[ -z "$value" ]]; then
+            local now; now=$(date +%s)
+            if (( now - start > wait_limit )); then
+                return 1
+            fi
+            sleep 1
+        fi
+    done
+    echo "$value"
+}
+
+# ---------------------------------------------------------------------------
+# Step 1: Start receiver on TO agent
+# ---------------------------------------------------------------------------
+
+echo "==> Starting receiver on $TO_HOST (port $TRANSFER_PORT) ..."
+
+RECV_REQUEST=$(jq -n \
+    --arg host "$TO_HOST" \
+    --arg username "$USERNAME" \
+    --arg token "$TOKEN" \
+    --arg port "$TRANSFER_PORT" \
+    --arg output "$OUTPUT" \
+    --arg timeout "$TIMEOUT" \
+    '{
+        hosts:    [$host],
+        script:   "agent-file-receive",
+        args:     ["--port", $port, "--output", $output, "--timeout", $timeout],
+        username: $username,
+        token:    $token
+    }')
+
+RECV_RESPONSE=$(api_run "$RECV_REQUEST")
+RECV_OK=$(echo "$RECV_RESPONSE" | jq -r '.ok' 2>/dev/null || echo "false")
+
+if [[ "$RECV_OK" != "true" ]]; then
+    echo "Error: Failed to start receiver on $TO_HOST" >&2
+    echo "$RECV_RESPONSE" | jq . >&2 2>/dev/null || echo "$RECV_RESPONSE" >&2
+    exit 1
+fi
+
+RECV_REQID=$(echo "$RECV_RESPONSE" | jq -r '.reqid // ""')
+echo "==> Receiver dispatched (reqid: $RECV_REQID)"
+
+# ---------------------------------------------------------------------------
+# Step 2: Wait for fingerprint from receiver agent
+# ---------------------------------------------------------------------------
+
+echo "==> Waiting for receiver to be ready ..."
+
+FINGERPRINT=$(poll_stdout_field "$RECV_REQID" "fingerprint" 30) || {
+    echo "Error: Timed out waiting for receiver fingerprint from $TO_HOST" >&2
+    exit 1
+}
+
+echo "==> Receiver ready. Fingerprint: $FINGERPRINT"
+
+# ---------------------------------------------------------------------------
+# Step 3: Dispatch sender on FROM agent
+# ---------------------------------------------------------------------------
+
+echo "==> Dispatching sender on $FROM_HOST ..."
+
+SEND_REQUEST=$(jq -n \
+    --arg host "$FROM_HOST" \
+    --arg username "$USERNAME" \
+    --arg token "$TOKEN" \
+    --arg path "$COLLECT_PATH" \
+    --arg dest "${TO_HOST}:${TRANSFER_PORT}" \
+    --arg fp "$FINGERPRINT" \
+    '{
+        hosts:    [$host],
+        script:   "agent-file-transfer",
+        args:     ["--path", $path, "--dest", $dest, "--cert-fingerprint", $fp],
+        username: $username,
+        token:    $token
+    }')
+
+SEND_RESPONSE=$(api_run "$SEND_REQUEST")
+SEND_OK=$(echo "$SEND_RESPONSE" | jq -r '.ok' 2>/dev/null || echo "false")
+
+if [[ "$SEND_OK" != "true" ]]; then
+    echo "Error: Failed to dispatch sender on $FROM_HOST" >&2
+    echo "$SEND_RESPONSE" | jq . >&2 2>/dev/null || echo "$SEND_RESPONSE" >&2
+    exit 1
+fi
+
+SEND_REQID=$(echo "$SEND_RESPONSE" | jq -r '.reqid // ""')
+SEND_EXIT=$(echo "$SEND_RESPONSE" | jq -r '.results[0].exit // -1')
+SEND_STDOUT=$(echo "$SEND_RESPONSE" | jq -r '.results[0].stdout // ""')
+SEND_STDERR=$(echo "$SEND_RESPONSE" | jq -r '.results[0].stderr // ""')
+
+[[ -n "$SEND_STDERR" ]] && echo "$SEND_STDERR" >&2
+
+if [[ "$SEND_EXIT" != "0" ]]; then
+    echo "Error: Sender script failed on $FROM_HOST (exit $SEND_EXIT)" >&2
+    exit 1
+fi
+
+ARCHIVE_SIZE=$(echo "$SEND_STDOUT" | grep '^size:' | sed 's/size://') || true
+[[ -n "$ARCHIVE_SIZE" ]] && echo "==> Archive size: $ARCHIVE_SIZE bytes"
+
+# ---------------------------------------------------------------------------
+# Step 4: Confirm receipt on TO agent
+# ---------------------------------------------------------------------------
+
+echo "==> Waiting for receiver to confirm ..."
+
+RECEIVED_SIZE=$(poll_stdout_field "$RECV_REQID" "received" 30) || {
+    echo "Warning: Could not confirm receipt from $TO_HOST" >&2
+    RECEIVED_SIZE=''
+}
+
+# ---------------------------------------------------------------------------
+# Done
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "================================================================"
+echo " Transfer complete"
+echo "================================================================"
+echo ""
+echo "  From:    $FROM_HOST:$COLLECT_PATH"
+echo "  To:      $TO_HOST:$OUTPUT"
+echo "  Port:    $TRANSFER_PORT"
+[[ -n "$ARCHIVE_SIZE" ]]  && echo "  Sent:    ${ARCHIVE_SIZE} bytes"
+[[ -n "$RECEIVED_SIZE" ]] && echo "  Recvd:   ${RECEIVED_SIZE} bytes"
+[[ -n "$SEND_REQID" ]]    && echo "  Send ID: $SEND_REQID"
+[[ -n "$RECV_REQID" ]]    && echo "  Recv ID: $RECV_REQID"
+echo ""
+echo "  Verify on $TO_HOST:"
+echo "    ced run $TO_HOST agent-file-transfer -- --path $OUTPUT --dest ... "
+echo ""
+echo "================================================================"
