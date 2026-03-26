@@ -190,6 +190,14 @@ validate_agent_script() {
 
     echo "[ Agent script ]"
 
+    # A plugin may be coordinator-only (no agent .sh script).
+    # Signal this with a COORDINATOR_ONLY file in the plugin directory.
+    if [[ -f "$plugin_path/COORDINATOR_ONLY" ]]; then
+        pass "Coordinator-only plugin (no agent script required)"
+        echo ""
+        return
+    fi
+
     if [[ -z "$script_file" ]]; then
         fail "No script file found (expected ${plugin_name}.sh or single .sh file)"
         echo ""
@@ -260,14 +268,14 @@ validate_ce-auth-plugins_hook() {
     local hook_file=""
     if [[ -f "$plugin_path/${plugin_name}" ]]; then
         hook_file="$plugin_path/${plugin_name}"
-    elif [[ -f "$plugin_path/ce-auth-plugins-hook" ]]; then
-        hook_file="$plugin_path/ce-auth-plugins-hook"
+    elif [[ -f "$plugin_path/auth-hook" ]]; then
+        hook_file="$plugin_path/auth-hook"
     fi
 
     echo "[ Auth hook ]"
 
     if [[ -z "$hook_file" ]]; then
-        fail "No hook file found (expected ${plugin_name} or ce-auth-plugins-hook)"
+        fail "No hook file found (expected ${plugin_name} or auth-hook)"
         echo ""
         return
     fi
@@ -300,7 +308,7 @@ validate_ce-auth-plugins_hook() {
         fail "Hook exited $exit_code on empty stdin (expected 0-3)"
     fi
 
-    # Synthetic ce-auth-pluginsorised payload
+    # Synthetic authorised payload
     local payload='{"action":"ping","script":"","hosts":["test-host"],"args":[],"username":"validator","token":"","source_ip":"127.0.0.1","timestamp":"2025-01-01T00:00:00Z"}'
     exit_code=0
     echo "$payload" | "$hook_file" >/dev/null 2>&1 || exit_code=$?
