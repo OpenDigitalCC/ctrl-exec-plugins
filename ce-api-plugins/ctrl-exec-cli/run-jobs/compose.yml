@@ -32,7 +32,7 @@ services:
       - "7443:7443"
     volumes:
       - agent-data:/etc/ctrl-exec-agent
-      - agent-scripts:/opt/ctrl-exec-scripts
+      - ce-agent-plugins:/opt/ctrl-exec-scripts
     networks:
       - ctrl-exec-net
 
@@ -59,7 +59,7 @@ volumes:
   dispatcher-data:
   dispatcher-registry:
   agent-data:
-  agent-scripts:
+  ce-agent-plugins:
   run-jobs-scripts:
   run-jobs-state:
 

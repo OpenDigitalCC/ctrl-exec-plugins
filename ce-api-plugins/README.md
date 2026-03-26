@@ -1,10 +1,10 @@
 ---
-title: ctrl-exec-plugins - manager
+title: ctrl-exec-plugins - ce-api-plugins
 subtitle: Interfaces and clients for the ctrl-exec HTTP API
 brand: odcc
 ---
 
-# manager
+# ce-api-plugins
 
 Tools and interfaces for operators and systems that interact with ctrl-exec
 via its HTTP API or CLI. This includes browser-based API interfaces, client
@@ -37,7 +37,7 @@ definition.
 
 ## Interface contract
 
-All manager plugins consume the ctrl-exec HTTP API as documented in
+All ce-api-plugins plugins consume the ctrl-exec HTTP API as documented in
 `openapi.json` and `API.md`. The base URL, credentials, and TLS settings
 are provided by the operator at deployment time.
 
@@ -132,7 +132,7 @@ For any internet-facing deployment:
 
 ## Plugin conventions
 
-All manager plugins in this category follow these conventions.
+All ce-api-plugins plugins in this category follow these conventions.
 
 Runtime discovery
 : Host lists and script names are retrieved from the live API at runtime,

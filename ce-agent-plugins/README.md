@@ -1,10 +1,10 @@
 ---
-title: exec-plugins - agent-scripts
+title: exec-plugins - ce-agent-plugins
 subtitle: Ready-built scripts for ctrl-exec agent hosts
 brand: odcc
 ---
 
-# agent-scripts
+# ce-agent-plugins
 
 Ready-built scripts for deployment on ctrl-exec agent hosts. Each script is
 installed on the agent, added to the allowlist in `scripts.conf`, and then

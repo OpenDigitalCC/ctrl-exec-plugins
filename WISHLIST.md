@@ -10,7 +10,7 @@ Plugin concepts by category. Each entry is a brief summary of purpose,
 interface, and any notable implementation considerations.
 
 
-## ctrl-exec-manager
+## ctrl-exec-ce-api-plugins
 
 
 ### rapidoc
@@ -99,7 +99,7 @@ where only bash, curl, and jq are available.
 
 ---
 
-## agent-scripts
+## ce-agent-plugins
 
 
 ### linux-audit

@@ -5,9 +5,9 @@
 #   tools/validate-plugin <plugin-path>
 #
 # Examples:
-#   tools/validate-plugin agent-scripts/linux-audit
-#   tools/validate-plugin auth/htpasswd
-#   tools/validate-plugin manager/rapidoc
+#   tools/validate-plugin ce-agent-plugins/linux-audit
+#   tools/validate-plugin ce-auth-plugins/htpasswd
+#   tools/validate-plugin ce-api-plugins/rapidoc
 #
 # Exit codes:
 #   0   all checks passed
@@ -80,15 +80,15 @@ main() {
     # Detect category from path
     local category
     case "$plugin_path" in
-        agent-scripts/*) category="agent-scripts" ;;
-        auth/*)          category="auth" ;;
-        manager/*) category="manager" ;;
-        */agent-scripts/*) category="agent-scripts" ;;
-        */auth/*)          category="auth" ;;
-        */manager/*) category="manager" ;;
+        ce-agent-plugins/*) category="ce-agent-plugins" ;;
+        ce-auth-plugins/*)          category="ce-auth-plugins" ;;
+        ce-api-plugins/*) category="ce-api-plugins" ;;
+        */ce-agent-plugins/*) category="ce-agent-plugins" ;;
+        */ce-auth-plugins/*)          category="ce-auth-plugins" ;;
+        */ce-api-plugins/*) category="ce-api-plugins" ;;
         *)
             echo "Error: cannot determine category from path '$plugin_path'" >&2
-            echo "  Path must contain agent-scripts/, auth/, or manager/" >&2
+            echo "  Path must contain ce-agent-plugins/, ce-auth-plugins/, or ce-api-plugins/" >&2
             exit 1
             ;;
     esac
@@ -118,15 +118,15 @@ main() {
         check_heading "$readme" "Limitations"
 
         case "$category" in
-            agent-scripts)
+            ce-agent-plugins)
                 check_heading "$readme" "scripts.conf"
                 check_heading "$readme" "Subcommands"
                 ;;
-            auth)
+            ce-auth-plugins)
                 check_heading "$readme" "Configuration"
                 check_heading "$readme" "Exit codes"
                 ;;
-            manager)
+            ce-api-plugins)
                 check_heading "$readme" "Configuration"
                 ;;
         esac
@@ -145,14 +145,14 @@ main() {
     # --- Category-specific checks --------------------------------------------
 
     case "$category" in
-        agent-scripts)
+        ce-agent-plugins)
             validate_agent_script "$plugin_path" "$plugin_name"
             ;;
-        auth)
-            validate_auth_hook "$plugin_path" "$plugin_name"
+        ce-auth-plugins)
+            validate_ce-auth-plugins_hook "$plugin_path" "$plugin_name"
             ;;
-        manager)
-            validate_manager "$plugin_path" "$plugin_name"
+        ce-api-plugins)
+            validate_ce-api-plugins "$plugin_path" "$plugin_name"
             ;;
     esac
 
@@ -253,21 +253,21 @@ validate_agent_script() {
     echo ""
 }
 
-validate_auth_hook() {
+validate_ce-auth-plugins_hook() {
     local plugin_path="$1" plugin_name="$2"
 
     # Locate hook executable
     local hook_file=""
     if [[ -f "$plugin_path/${plugin_name}" ]]; then
         hook_file="$plugin_path/${plugin_name}"
-    elif [[ -f "$plugin_path/auth-hook" ]]; then
-        hook_file="$plugin_path/auth-hook"
+    elif [[ -f "$plugin_path/ce-auth-plugins-hook" ]]; then
+        hook_file="$plugin_path/ce-auth-plugins-hook"
     fi
 
     echo "[ Auth hook ]"
 
     if [[ -z "$hook_file" ]]; then
-        fail "No hook file found (expected ${plugin_name} or auth-hook)"
+        fail "No hook file found (expected ${plugin_name} or ce-auth-plugins-hook)"
         echo ""
         return
     fi
@@ -300,7 +300,7 @@ validate_auth_hook() {
         fail "Hook exited $exit_code on empty stdin (expected 0-3)"
     fi
 
-    # Synthetic authorised payload
+    # Synthetic ce-auth-pluginsorised payload
     local payload='{"action":"ping","script":"","hosts":["test-host"],"args":[],"username":"validator","token":"","source_ip":"127.0.0.1","timestamp":"2025-01-01T00:00:00Z"}'
     exit_code=0
     echo "$payload" | "$hook_file" >/dev/null 2>&1 || exit_code=$?
@@ -314,7 +314,7 @@ validate_auth_hook() {
     echo ""
 }
 
-validate_manager() {
+validate_ce-api-plugins() {
     local plugin_path="$1" plugin_name="$2"
 
     echo "[ Manager plugin ]"

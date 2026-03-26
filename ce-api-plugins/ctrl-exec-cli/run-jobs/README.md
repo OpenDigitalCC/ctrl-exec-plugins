@@ -243,7 +243,7 @@ docker compose -f compose.run-jobs.yml up -d --build
 
 The CLI is available from the
 [ctrl-exec-plugins](https://github.com/OpenDigitalCC/ctrl-exec-plugins)
-repository under `manager/ctrl-exec-cli/`.
+repository under `ce-api-plugins/ctrl-exec-cli/`.
 
 Full CLI usage:
 

@@ -76,9 +76,9 @@ declare -A TARBALL_NAME=(
 )
 
 declare -A CATEGORY_DIR=(
-    [ce-agent-plugins]="agent-scripts"
+    [ce-agent-plugins]="ce-agent-plugins"
     [ce-auth-plugins]="ce-auth-plugins"
-    [ce-api-plugins]="manager"
+    [ce-api-plugins]="ce-api-plugins"
 )
 
 CATEGORIES=(ce-agent-plugins ce-auth-plugins ce-api-plugins)

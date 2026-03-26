@@ -14,9 +14,9 @@ request.
 Read the category README for the category you are contributing to before
 starting. The interface contracts differ by category.
 
-- [agent-scripts/README.md](agent-scripts/README.md)
-- [manager/README.md](manager/README.md)
-- [auth/README.md](auth/README.md)
+- [ce-agent-plugins/README.md](ce-agent-plugins/README.md)
+- [ce-api-plugins/README.md](ce-api-plugins/README.md)
+- [ce-auth-pluginsREADME.md](ce-auth-pluginsREADME.md)
 
 
 ## Plugin structure
@@ -86,7 +86,7 @@ Minimal `sbom.json` example:
 Each category has a specific set of required headings. The validator checks
 for these exactly. Use ATX-style headers (`## Heading`).
 
-Agent scripts (`agent-scripts/`):
+Agent scripts (`ce-agent-plugins/`):
 
 ```
 ## Purpose
@@ -98,7 +98,7 @@ Agent scripts (`agent-scripts/`):
 ## Limitations
 ```
 
-Auth hooks (`auth/`):
+Auth hooks (`ce-auth-plugins`):
 
 ```
 ## Purpose
@@ -110,7 +110,7 @@ Auth hooks (`auth/`):
 ## Limitations
 ```
 
-Manager plugins (`manager/`):
+Manager plugins (`ce-api-plugins/`):
 
 ```
 ## Purpose
@@ -124,7 +124,7 @@ Manager plugins (`manager/`):
 
 ## Category interface contracts
 
-### agent-scripts
+### ce-agent-plugins
 
 Scripts receive a JSON context object on stdin. Discard it if not needed:
 
@@ -160,7 +160,7 @@ still document which agent scripts are required as prerequisites.
 ### auth hooks
 
 Hooks receive full request context as environment variables and as JSON on
-stdin. Read `auth/README.md` for the full variable and field reference.
+stdin. Read `ce-auth-pluginsREADME.md` for the full variable and field reference.
 
 Hooks must handle malformed or empty stdin without crashing - exit 1 (denied)
 on any unhandled error. This is a hard requirement: ctrl-exec treats a
@@ -186,9 +186,9 @@ Run the validator against your plugin before opening a pull request. The
 validator is at `tools/validate-plugin` in the repository root.
 
 ```bash
-tools/validate-plugin agent-scripts/my-plugin
-tools/validate-plugin auth/my-hook
-tools/validate-plugin manager/my-manager
+tools/validate-plugin ce-agent-plugins/my-plugin
+tools/validate-plugin ce-auth-pluginsmy-hook
+tools/validate-plugin ce-api-plugins/my-ce-api-plugins
 ```
 
 The validator checks:
@@ -207,8 +207,8 @@ requests are validated automatically on open and on each subsequent push.
 Example of a passing run:
 
 ```
-Validating plugin: linux-audit (category: agent-scripts)
-Path: agent-scripts/linux-audit
+Validating plugin: linux-audit (category: ce-agent-plugins)
+Path: ce-agent-plugins/linux-audit
 
 [ Required files ]
   PASS  README.md exists

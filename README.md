@@ -21,27 +21,27 @@ between plugins, and no requirement to use more than one.
 
 ## Categories
 
-`manager/`
+`ce-api-plugins/`
 : Tools and interfaces for operators and systems that interact with ctrl-exec
   via the HTTP API or the CLI. Includes browser-based API interfaces, client
   libraries, collection files for HTTP tools, and CLI wrappers.
 
-`agent-scripts/`
+`ce-agent-plugins/`
 : Ready-built scripts deployable to ctrl-exec agents. Each script is
   installed via the agent's `scripts.conf` allowlist and executed by ctrl-exec
  Scripts cover common management tasks across a
   range of services and operating system functions.
 
-`auth/`
+`ce-auth-plugins`
 : Auth hooks for deployment on ctrl-exec or agent hosts. Each hook reads
   request context from stdin as JSON and controls access by exit code.
   Hooks integrate ctrl-exec with external identity and credential systems.
 
 Full documentation for each category is in its own guide:
 
-- [manager/README.md](manager/README.md)
-- [agent-scripts/README.md](agent-scripts/README.md)
-- [auth/README.md](auth/README.md)
+- [ce-api-plugins/README.md](ce-api-plugins/README.md)
+- [ce-agent-plugins/README.md](ce-agent-plugins/README.md)
+- [ce-auth-pluginsREADME.md](ce-auth-pluginsREADME.md)
 
 
 ## Prerequisites
