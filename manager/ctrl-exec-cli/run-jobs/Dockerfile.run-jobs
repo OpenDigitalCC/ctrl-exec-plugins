@@ -1,0 +1,21 @@
+FROM debian:trixie-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        perl \
+        bsdutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ctrl-exec CLI (single script, core modules only)
+COPY ctrl-exec-cli /usr/local/bin/ctrl-exec-cli
+RUN chmod 755 /usr/local/bin/ctrl-exec-cli
+
+# Install job runner
+COPY run-jobs.sh /usr/local/bin/run-jobs.sh
+RUN chmod 755 /usr/local/bin/run-jobs.sh
+
+COPY run-jobs-entrypoint.sh /run-jobs-entrypoint.sh
+RUN chmod 755 /run-jobs-entrypoint.sh
+
+ENTRYPOINT ["/run-jobs-entrypoint.sh"]

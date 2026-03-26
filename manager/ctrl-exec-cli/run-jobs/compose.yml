@@ -1,0 +1,67 @@
+services:
+  dispatcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.dispatcher
+    container_name: dispatcher
+    restart: unless-stopped
+    environment:
+      API_BIND: 0.0.0.0        # reachable from run-jobs on the same network
+      API_PORT: 7445
+      API_AUTH_DEFAULT: deny   # set to allow for isolated/dev environments
+    ports:
+      - "7444:7444"            # pairing - expose only when actively pairing
+      - "7445:7445"            # API
+    volumes:
+      - dispatcher-data:/etc/ctrl-exec
+      - dispatcher-registry:/var/lib/ctrl-exec
+      # - ./auth-hook:/etc/ctrl-exec/auth-hook:ro
+    networks:
+      - ctrl-exec-net
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: agent
+    restart: on-failure
+    hostname: agent
+    environment:
+      DISPATCHER_HOST: dispatcher
+    ports:
+      - "7443:7443"
+    volumes:
+      - agent-data:/etc/ctrl-exec-agent
+      - agent-scripts:/opt/ctrl-exec-scripts
+    networks:
+      - ctrl-exec-net
+
+  run-jobs:
+    build:
+      context: .
+      dockerfile: Dockerfile.run-jobs
+    container_name: run-jobs
+    restart: unless-stopped
+    environment:
+      CTRL_EXEC_HOST: dispatcher    # used by ctrl-exec-cli
+      CTRL_EXEC_PORT: 7445
+      JOBS_SCRIPTS_DIR: /etc/run-jobs/scripts
+      JOBS_STATE_DIR: /var/lib/run-jobs/state
+    volumes:
+      - run-jobs-scripts:/etc/run-jobs/scripts
+      - run-jobs-state:/var/lib/run-jobs/state
+    networks:
+      - ctrl-exec-net
+    depends_on:
+      - dispatcher
+
+volumes:
+  dispatcher-data:
+  dispatcher-registry:
+  agent-data:
+  agent-scripts:
+  run-jobs-scripts:
+  run-jobs-state:
+
+networks:
+  ctrl-exec-net:

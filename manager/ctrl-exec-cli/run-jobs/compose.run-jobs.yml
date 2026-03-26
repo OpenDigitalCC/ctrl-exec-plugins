@@ -1,0 +1,26 @@
+services:
+  run-jobs:
+    build:
+      context: .
+      dockerfile: Dockerfile.run-jobs
+    container_name: run-jobs
+    restart: unless-stopped
+    environment:
+      CTRL_EXEC_API_URL: http://dispatcher:7445
+      CTRL_EXEC_TOKEN:                            # set if auth hook requires a token
+      CTRL_EXEC_USERNAME: run-jobs
+      JOBS_SCRIPTS_DIR: /etc/run-jobs/scripts
+      JOBS_STATE_DIR: /var/lib/run-jobs/state
+    volumes:
+      - run-jobs-scripts:/etc/run-jobs/scripts
+      - run-jobs-state:/var/lib/run-jobs/state
+    networks:
+      - ctrl-exec-net
+
+volumes:
+  run-jobs-scripts:
+  run-jobs-state:
+
+networks:
+  ctrl-exec-net:
+    external: true                                # join the existing dispatcher network
