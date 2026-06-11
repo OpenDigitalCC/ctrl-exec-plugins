@@ -47,11 +47,13 @@ MCP server command. It needs no build step.
 
 ```bash
 cp -r ce-api-plugins/ctrl-exec-mcp /opt/ctrl-exec-mcp
-/opt/ctrl-exec-mcp/ctrl-exec-mcp        # speaks MCP over stdio
+/opt/ctrl-exec-mcp/ctrl-exec-mcp                       # MCP over stdio (default)
+CTRLEXEC_MCP_HTTP=127.0.0.1:7446 /opt/ctrl-exec-mcp/ctrl-exec-mcp   # Streamable HTTP
 ```
 
-Most MCP clients launch the server themselves as a subprocess; point the client
-at the `ctrl-exec-mcp` path (see *Examples*).
+Most MCP clients launch the server themselves as a stdio subprocess; point the
+client at the `ctrl-exec-mcp` path (see *Examples*). For networked clients, run
+the Streamable HTTP transport and front it with a reverse proxy for TLS.
 
 ## Configuration
 
@@ -61,11 +63,16 @@ credentials are committed.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CTRLEXEC_API_URL` | `http://localhost:7445` | Base URL of `ctrl-exec-api`. |
-| `CTRLEXEC_TOKEN` | (none) | Auth token forwarded to the API for the auth hook. |
+| `CTRLEXEC_TOKEN` | (none) | Auth token for the **stdio** transport (the operator's identity). |
+| `CTRLEXEC_TIMEOUT` | `300` | Seconds to poll an async run before giving up. |
+| `CTRLEXEC_MCP_HTTP` | (unset) | If set to `[host:]port`, serve Streamable HTTP instead of stdio. |
 
 Host lists and script names are never hardcoded: they are discovered at runtime
-from the API (`GET /discovery`). The bridge transports the operator-supplied
-token to `/run`; ctrl-exec's auth hook remains the single policy point.
+from the API (`GET /discovery`). On **stdio**, the bridge forwards
+`CTRLEXEC_TOKEN` as the single operator identity. On **HTTP**, each session is
+bound to the token from its `Authorization: Bearer` header, so the HTTP client's
+own identity is forwarded to the API. Either way, ctrl-exec's auth hook remains
+the single policy point — the bridge adds no access control of its own.
 
 ## Examples
 
@@ -94,22 +101,43 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   | ./ctrl-exec-mcp
 ```
 
+Over the Streamable HTTP transport, `initialize` returns an `Mcp-Session-Id`
+header that subsequent requests must carry; the `Authorization` token becomes
+the caller's ctrl-exec identity:
+
+```bash
+CTRLEXEC_MCP_HTTP=127.0.0.1:7446 ./ctrl-exec-mcp &
+
+curl -si -X POST http://127.0.0.1:7446/ \
+  -H 'Authorization: Bearer my-token' -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+# -> 200 with header: Mcp-Session-Id: <id>
+
+curl -s -X POST http://127.0.0.1:7446/ \
+  -H 'Mcp-Session-Id: <id>' -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+```
+
 ## Limitations
 
 - **Scope: MCP tools only.** Resources, prompts, and sampling are not exposed.
-- **Build status.** The protocol core, stdio transport, discovery-backed tool
-  catalogue, and `/run`-backed execution are in place. The Streamable HTTP
-  transport, per-call argument validation against the tool schema, and proactive
-  `tools/list_changed` notifications are added in later commits. `tools/list`
+- **Build status.** The protocol core, the stdio and Streamable HTTP transports,
+  the discovery-backed tool catalogue, and `/run`-backed execution are in place.
+  Per-call argument validation against the tool schema and proactive
+  `tools/list_changed` notifications are added in a later commit. `tools/list`
   re-queries discovery on each call, so it stays current without a restart.
+- **HTTP concurrency.** The HTTP transport is single-process and sequential
+  (sessions live in memory, so it must not fork); a long-running `tools/call`
+  blocks other requests while it polls. Suitable for one or a few clients. There
+  is no built-in TLS — terminate TLS at a reverse proxy.
 - **Argument handling.** `tools/call` validates only that requested hosts are in
   the tool's set; full validation of the named arguments against the schema is a
   later commit. The agent's allowlist and auth hook remain the authoritative
   controls regardless.
-- **Long-running jobs.** Once execution is wired, `tools/call` dispatches via
-  the ctrl-exec async path (`POST /run` with `async`, then poll
-  `GET /status/{reqid}`) so calls are not bound by the API read timeout; the
-  client blocks on the call while the bridge polls.
+- **Long-running jobs.** `tools/call` dispatches via the ctrl-exec async path
+  (`POST /run` with `async`, then poll `GET /status/{reqid}`) so calls are not
+  bound by the API read timeout; the client blocks on the call while the bridge
+  polls, up to `CTRLEXEC_TIMEOUT`.
 - **Identity.** The bridge performs no access control of its own; an
   unauthenticated transport (e.g. stdio on a shared host) inherits whatever the
   operator's `CTRLEXEC_TOKEN` permits. Protect the API and the token

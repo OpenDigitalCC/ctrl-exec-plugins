@@ -17,49 +17,136 @@ our $VERSION = '0.1.0';
 
 # ctrl-exec-mcp - a Model Context Protocol server that bridges an MCP client
 # (e.g. an LLM agent) to the ctrl-exec HTTP API: the protocol core, the stdio
-# transport, a discovery-backed tool catalogue, and /run-backed execution.
+# and Streamable HTTP transports, a discovery-backed tool catalogue, and
+# /run-backed execution.
 #
-# Transport: MCP stdio - one JSON-RPC 2.0 message per line on STDIN, one
-# response line on STDOUT, UTF-8, no embedded newlines.
+# Transports:
+#   stdio (default) - one JSON-RPC 2.0 message per line on STDIN/STDOUT.
+#   Streamable HTTP - set CTRLEXEC_MCP_HTTP=[host:]port. POST JSON-RPC messages;
+#                     a session is minted on initialize (Mcp-Session-Id header).
 #
 # Configuration (operator-supplied, no embedded credentials):
 #   CTRLEXEC_API_URL    base URL of ctrl-exec-api (default http://localhost:7445)
-#   CTRLEXEC_TOKEN      auth token forwarded to the API for the auth hook
+#   CTRLEXEC_TOKEN      auth token for stdio (the operator's identity)
 #   CTRLEXEC_TIMEOUT    seconds to poll an async run before giving up (default 300)
+#   CTRLEXEC_MCP_HTTP   if set, serve Streamable HTTP on [host:]port instead of stdio
 
-my $api_url = $ENV{CTRLEXEC_API_URL} // 'http://localhost:7445';
-my $token   = $ENV{CTRLEXEC_TOKEN}   // '';
+my $API_URL = $ENV{CTRLEXEC_API_URL} // 'http://localhost:7445';
+my $TIMEOUT = $ENV{CTRLEXEC_TIMEOUT} // 300;
 
-my $discovery = CtrlExecMCP::Discovery->new(url => $api_url, token => $token);
-my $catalog   = CtrlExecMCP::Catalog->new(source => sub { $discovery->hosts });
+# Build a fully-wired MCP server for a given identity (token). Each call yields
+# its own catalogue/runner bound to that token, so the token flows through to
+# ctrl-exec's auth hook on every discovery and run.
+sub build_server {
+    my ($token) = @_;
+    $token //= '';
+    my $discovery = CtrlExecMCP::Discovery->new(url => $API_URL, token => $token);
+    my $catalog   = CtrlExecMCP::Catalog->new(source => sub { $discovery->hosts });
+    my $api       = CtrlExecMCP::Api->new(url => $API_URL, token => $token);
+    my $runner    = CtrlExecMCP::Runner->new(
+        catalog => $catalog, api => $api, timeout => $TIMEOUT,
+    );
+    return CtrlExecMCP::Server->new(
+        catalog => $catalog, runner => $runner,
+        name => 'ctrl-exec-mcp', version => $VERSION,
+    );
+}
 
-my $api    = CtrlExecMCP::Api->new(url => $api_url, token => $token);
-my $runner = CtrlExecMCP::Runner->new(
-    catalog => $catalog,
-    api     => $api,
-    timeout => ($ENV{CTRLEXEC_TIMEOUT} // 300),
-);
+if (my $bind = $ENV{CTRLEXEC_MCP_HTTP}) {
+    run_http($bind);
+}
+else {
+    run_stdio(build_server($ENV{CTRLEXEC_TOKEN}));
+}
 
-my $server = CtrlExecMCP::Server->new(
-    catalog => $catalog,
-    runner  => $runner,
-    name    => 'ctrl-exec-mcp',
-    version => $VERSION,
-);
+# --- stdio transport ---
 
-binmode STDIN,  ':encoding(UTF-8)';
-binmode STDOUT, ':encoding(UTF-8)';
-STDOUT->autoflush(1);
+sub run_stdio {
+    my ($server) = @_;
+    binmode STDIN,  ':encoding(UTF-8)';
+    binmode STDOUT, ':encoding(UTF-8)';
+    STDOUT->autoflush(1);
 
-while (defined(my $line = <STDIN>)) {
+    while (defined(my $line = <STDIN>)) {
+        $line =~ s/\r?\n\z//;
+        next if $line eq '';
+
+        my $msg = eval { decode_json($line) };
+        my $response = $@
+            ? rpc_error(undef, JR_PARSE_ERROR, 'parse error')
+            : $server->handle($msg);
+
+        next unless defined $response;   # notifications get no reply
+        print encode_json($response), "\n";
+    }
+}
+
+# --- Streamable HTTP transport ---
+#
+# Single-process, sequential accept loop: sessions live in this process's
+# memory (so we must not fork), which means a long-running tools/call blocks
+# other requests while it polls. Suitable for one or a few clients; front with
+# a reverse proxy for TLS. The per-session identity is the Authorization:
+# Bearer token, forwarded to ctrl-exec via build_server.
+
+sub run_http {
+    my ($bind) = @_;
+    require IO::Socket::INET;
+    require CtrlExecMCP::Transport::Http;
+
+    my ($host, $port) = $bind =~ /^(.+):(\d+)$/ ? ($1, $2) : ('127.0.0.1', $bind);
+    my $srv = IO::Socket::INET->new(
+        LocalAddr => $host, LocalPort => $port,
+        Listen => 16, ReuseAddr => 1, Proto => 'tcp',
+    ) or die "ctrl-exec-mcp: cannot bind $host:$port: $!\n";
+
+    my $transport = CtrlExecMCP::Transport::Http->new(make_server => \&build_server);
+    warn "ctrl-exec-mcp: Streamable HTTP on $host:$port\n";
+
+    while (my $conn = $srv->accept) {
+        my $req = _read_http($conn);
+        _write_http($conn, $transport->handle_request(%$req)) if $req;
+        close $conn;
+    }
+}
+
+sub _read_http {
+    my ($conn) = @_;
+    my $line = <$conn>;
+    return undef unless defined $line;
     $line =~ s/\r?\n\z//;
-    next if $line eq '';
+    my ($method, $path) = split /\s+/, $line;
 
-    my $msg = eval { decode_json($line) };
-    my $response = $@
-        ? rpc_error(undef, JR_PARSE_ERROR, 'parse error')
-        : $server->handle($msg);
+    my %headers;
+    my $count = 0;
+    while (my $h = <$conn>) {
+        $h =~ s/\r?\n\z//;
+        last if $h eq '';
+        return undef if ++$count > 100;   # header flood guard
+        $headers{ lc $1 } = $2 if $h =~ /^([^:]+):\s*(.*)$/;
+    }
 
-    next unless defined $response;   # notifications get no reply
-    print encode_json($response), "\n";
+    my $body = '';
+    if (my $len = $headers{'content-length'}) {
+        $len = 1_048_576 if $len > 1_048_576;   # cap
+        read $conn, $body, $len;
+    }
+    return { method => $method, path => $path, headers => \%headers, body => $body };
+}
+
+sub _write_http {
+    my ($conn, $resp) = @_;
+    my %text = (
+        200 => 'OK', 202 => 'Accepted',
+        400 => 'Bad Request', 404 => 'Not Found', 405 => 'Method Not Allowed',
+    );
+    my $code = $resp->{status} // 200;
+    my $body = $resp->{body}   // '';
+    print $conn "HTTP/1.1 $code " . ($text{$code} // 'OK') . "\r\n";
+    print $conn "Connection: close\r\n";
+    for my $k (sort keys %{ $resp->{headers} || {} }) {
+        print $conn "$k: $resp->{headers}{$k}\r\n";
+    }
+    print $conn "Content-Length: " . length($body) . "\r\n\r\n";
+    print $conn $body;
 }
