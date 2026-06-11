@@ -219,6 +219,51 @@ curl -s -X POST http://127.0.0.1:7446/ \
 - **A long run never returns.** It exceeded `CTRLEXEC_TIMEOUT`; raise it, or run
   the script faster. The agent keeps running the job regardless (ctrl-exec async).
 
+## Architecture
+
+The bridge is a handful of small Perl modules under `lib/CtrlExecMCP/` plus the
+`ctrl-exec-mcp` entry point. The design separates the MCP protocol core from the
+ctrl-exec backends behind two injected seams (a *catalogue* and a *runner*), so
+the protocol is testable in isolation and the backends are swappable.
+
+| Component | Responsibility |
+| --- | --- |
+| `ctrl-exec-mcp` | Entry point. Selects the transport (stdio vs HTTP), holds the `build_server($token)` factory, and runs the loops: the stdio `select`/`sysread` loop and the HTTP socket accept loop with minimal HTTP parsing. |
+| `CtrlExecMCP::JsonRpc` | JSON-RPC 2.0 framing and the standard error codes. Pure data. |
+| `CtrlExecMCP::Server` | The MCP dispatcher: `initialize`, `ping`, `tools/list`, `tools/call`, gated on initialize. Holds an injected catalogue + runner; `poll_list_changed` drives the optional notification. Knows nothing about HTTP or sockets. |
+| `CtrlExecMCP::Discovery` | Client for `GET /discovery` → the hosts map. |
+| `CtrlExecMCP::Catalog` | Versioned tool synthesis from discovery (`list_tools`/`has_tool`/`tool`/`refresh`) and the tool-name → script/hosts/argv index. |
+| `CtrlExecMCP::Api` | Client for async dispatch (`POST /run`) and polling (`GET /status`). |
+| `CtrlExecMCP::Runner` | `tools/call` execution: validate, render `argv`, dispatch, poll, shape the per-host result. |
+| `CtrlExecMCP::Validate` | The pragmatic JSON Schema subset validator. |
+| `CtrlExecMCP::Transport::Http` | Streamable HTTP sessions and the per-client `Authorization: Bearer` → token identity mapping. |
+
+**Request lifecycle.** A transport reads a JSON-RPC message and calls
+`Server->handle($msg)`. `tools/list` asks the catalogue (which re-queries
+discovery and synthesises tools); `tools/call` hands off to the runner, which
+validates the arguments, renders the script's `argv`, dispatches via the API
+async path, polls `/status`, and shapes the result. The transport writes the
+response back. On HTTP, each session gets its own `Server` (and thus its own
+catalogue/runner) wired to that client's token by `build_server`.
+
+**Seams for extension.**
+
+- Add an MCP method by adding a branch in `Server->handle`.
+- Change how scripts map to tools by editing `Catalog` (synthesis) - the rest is
+  unaffected.
+- Support another transport by writing one that reads messages and calls
+  `Server->handle`; the protocol core is transport-agnostic.
+- The catalogue, runner, HTTP agents (`Discovery`/`Api`), and the runner's clock
+  and sleep are all injected, which is how the test suite exercises every path
+  without networking or waiting.
+
+**Tests.** `t/` mirrors `lib/`, one file per module, each using fakes for the
+injected collaborators. Run them with:
+
+```bash
+prove -Ilib t/
+```
+
 ## Limitations
 
 - **Scope: MCP tools only.** Resources, prompts, and sampling are not exposed.
