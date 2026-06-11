@@ -1,0 +1,26 @@
+meta {
+  name: Run (sync)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/run
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "hosts": ["{{host}}"],
+    "script": "{{script}}",
+    "args": [],
+    "token": "{{token}}"
+  }
+}
+
+docs {
+  Run an allowlisted script and block until all hosts complete. The connection
+  stays open until the script finishes (up to the API read timeout). For long
+  jobs use "Run (async)" instead.
+}

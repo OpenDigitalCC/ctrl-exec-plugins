@@ -1,0 +1,16 @@
+meta {
+  name: Discovery
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/discovery
+  body: none
+  auth: none
+}
+
+docs {
+  List all registered agents and the scripts available on each. Scripts that
+  ship a schema sidecar include their typed argument schema.
+}

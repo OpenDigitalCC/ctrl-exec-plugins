@@ -1,0 +1,35 @@
+meta {
+  name: Run (async)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/run
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "hosts": ["{{host}}"],
+    "script": "{{script}}",
+    "args": [],
+    "token": "{{token}}",
+    "async": true
+  }
+}
+
+script:post-response {
+  // Capture the reqid so the "Status" request can poll it.
+  if (res.body && res.body.reqid) {
+    bru.setEnvVar("reqid", res.body.reqid);
+  }
+}
+
+docs {
+  Submit a detached run. The server returns 202 immediately with a reqid and
+  per-host acceptance; the agent runs the script detached (not bound by the read
+  timeout). The post-response script stores the reqid in the environment so the
+  "Status" request can fetch the result.
+}

@@ -1,0 +1,22 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "bruno",
+      "version": "0.1.0",
+      "description": "Bruno API collection for the ctrl-exec HTTP API (plain-text .bru files)"
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "bruno",
+      "version": "latest",
+      "description": "Bruno - open-source API client that runs this collection (desktop app or @usebruno/cli)",
+      "purl": "pkg:npm/@usebruno/cli"
+    }
+  ]
+}

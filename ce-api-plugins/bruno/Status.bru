@@ -1,0 +1,18 @@
+meta {
+  name: Status
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/status/{{reqid}}
+  body: none
+  auth: none
+}
+
+docs {
+  Fetch the state/result of a run by reqid. After "Run (async)" the reqid is set
+  automatically; otherwise set `reqid` in the environment. For a sync run this
+  returns the stored result; for an async run it returns the aggregated per-host
+  state with `complete` and `pending`. Re-send to poll until `complete` is true.
+}

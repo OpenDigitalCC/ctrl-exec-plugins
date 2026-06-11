@@ -1,0 +1,23 @@
+meta {
+  name: Ping
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/ping
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "hosts": ["{{host}}"],
+    "token": "{{token}}"
+  }
+}
+
+docs {
+  Test mTLS connectivity to one or more agents. Set `host` and `token` in the
+  environment.
+}
