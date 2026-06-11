@@ -60,6 +60,7 @@ sub main {
         'ping'      => \&cmd_ping,
         'run'       => \&cmd_run,
         'status'    => \&cmd_status,
+        'wait'      => \&cmd_wait,
         'discovery' => \&cmd_discovery,
     );
 
@@ -184,13 +185,18 @@ sub cmd_run {
 
     die usage_run() unless @hosts && $opts{script};
 
-    my $data = api_post($ctx, '/run', {
+    my %body = (
         hosts    => \@hosts,
         script   => $opts{script},
         args     => \@script_args,
         username => $ctx->{username},
         token    => $ctx->{token},
-    });
+    );
+    # True async: the server returns 202 immediately and the agent runs the
+    # script detached, so a long job is not bound by the API read timeout.
+    $body{async} = JSON::PP::true if $opts{async};
+
+    my $data = api_post($ctx, '/run', \%body);
 
     if (!$data->{ok}) {
         if (($data->{code} // 0) == 4) {
@@ -201,16 +207,24 @@ sub cmd_run {
         die_error($data);
     }
 
-    # --async: print reqid and exit immediately
+    # --async: report per-host acceptance and the reqid, then exit.
     if ($opts{async}) {
         my $reqid = $data->{reqid} // '';
         die "Error: server did not return a reqid\n" unless $reqid;
         if ($ctx->{json}) {
-            print encode_json({ reqid => $reqid }), "\n";
+            print encode_json($data), "\n";
+            return;
         }
-        else {
-            print "$reqid\n";
+        # Acceptance detail and the hint go to stderr so stdout stays a bare
+        # reqid for capture:  REQID=$(ctrl-exec-cli run ... --async)
+        for my $r (@{ $data->{results} // [] }) {
+            printf STDERR "==> %-20s  [%s]%s\n",
+                $r->{host}   // '?',
+                $r->{status} // 'accepted',
+                ($r->{error} ? "  $r->{error}" : '');
         }
+        print "$reqid\n";
+        print STDERR "Check progress: ctrl-exec-cli status $reqid   (or: wait $reqid)\n";
         return;
     }
 
@@ -287,25 +301,67 @@ sub cmd_status {
         return;
     }
 
+    exit 1 if _print_status($data);
+}
+
+# Render a /status record - either an async aggregation (hosts is a map, with
+# complete/pending) or a synchronous result (hosts is an array, results carries
+# per-host output). Returns true if a *completed* run had any failure.
+sub _print_status {
+    my ($data) = @_;
+
+    if (($data->{mode} // '') eq 'async' || ref $data->{hosts} eq 'HASH') {
+        my $hosts = $data->{hosts} // {};
+        printf "reqid:   %s\n", $data->{reqid}  // '-';
+        printf "script:  %s\n", $data->{script} // '-';
+        printf "state:   %s\n", $data->{complete} ? 'complete' : 'pending';
+        my @pending = @{ $data->{pending} // [] };
+        printf "pending: %s\n", join(', ', @pending) if @pending;
+        print  "\n";
+
+        my $any_fail = 0;
+        for my $host (sort keys %$hosts) {
+            my $h  = $hosts->{$host};
+            my $st = $h->{status} // 'unknown';
+            if ($st eq 'done') {
+                my $exit = $h->{exit} // -1;
+                $any_fail = 1 if $exit != 0;
+                printf "==> %-20s  [done  exit:%d]\n", $host, $exit;
+                if (length($h->{stdout} // '')) {
+                    print $h->{stdout};
+                    print "\n" unless $h->{stdout} =~ /\n$/;
+                }
+                if (length($h->{stderr} // '')) {
+                    print STDERR $h->{stderr};
+                    print STDERR "\n" unless $h->{stderr} =~ /\n$/;
+                }
+            }
+            elsif ($st eq 'running' || $st eq 'accepted') {
+                printf "==> %-20s  [%s]\n", $host, $st;
+            }
+            else {   # busy, error, expired
+                $any_fail = 1;
+                printf "==> %-20s  [%s]%s\n",
+                    $host, $st, ($h->{error} ? "  $h->{error}" : '');
+            }
+        }
+        return $data->{complete} ? $any_fail : 0;   # a pending run is not a failure
+    }
+
     printf "reqid:     %s\n",  $data->{reqid}     // '-';
     printf "script:    %s\n",  $data->{script}    // '-';
     printf "hosts:     %s\n",  join(', ', @{ $data->{hosts} // [] });
     printf "completed: %s\n",  _format_ts($data->{completed});
     print  "\n";
 
-    my @results  = @{ $data->{results} // [] };
     my $any_fail = 0;
-
-    for my $r (@results) {
+    for my $r (@{ $data->{results} // [] }) {
         my $exit   = $r->{exit} // -1;
         my $status = $exit == 0  ? 'ok'
                    : $exit == -1 ? 'error'
                    :               "exit:$exit";
 
-        printf "==> %-20s  [%s  %s]\n",
-            $r->{host},
-            $status,
-            $r->{rtt} // '-';
+        printf "==> %-20s  [%s  %s]\n", $r->{host}, $status, $r->{rtt} // '-';
 
         if (length($r->{stdout} // '')) {
             print $r->{stdout};
@@ -320,8 +376,48 @@ sub cmd_status {
             $any_fail = 1;
         }
     }
+    return $any_fail;
+}
 
-    exit 1 if $any_fail;
+sub cmd_wait {
+    my ($ctx, @args) = @_;
+
+    my %opts;
+    GetOptionsFromArray(\@args,
+        'json'      => \$opts{json},
+        'timeout=i' => \$opts{timeout},
+        'help|h'    => \$opts{help},
+    ) or die usage_wait();
+    print usage_wait() and exit 0 if $opts{help};
+
+    $ctx->{json} = 1 if $opts{json};
+
+    my $reqid = shift @args or die usage_wait();
+    die "Error: invalid reqid '$reqid'\n" unless $reqid =~ /^[a-f0-9]+$/i;
+
+    my $timeout  = $opts{timeout} // 300;
+    my $deadline = time + $timeout;
+
+    my $data;
+    while (1) {
+        $data = api_get($ctx, "/status/$reqid");
+        die_error($data) unless $data->{ok};
+        last if $data->{complete};        # sync records are always complete
+        last if time >= $deadline;
+        sleep 2;
+    }
+
+    if ($ctx->{json}) {
+        print encode_json($data), "\n";
+        return;
+    }
+
+    my $fail = _print_status($data);
+    unless ($data->{complete}) {
+        print STDERR "Timed out after ${timeout}s; run still pending.\n";
+        exit 2;
+    }
+    exit 1 if $fail;
 }
 
 sub _format_ts {
@@ -534,7 +630,8 @@ Commands:
   health                      Check API server liveness and version
   ping    <host> [host...]    Test mTLS connectivity to one or more agents
   run     <host> [host...]    Run an allowlisted script on one or more agents
-  status  <reqid>             Retrieve the stored result for a completed run
+  status  <reqid>             Show the current state/result of a run
+  wait    <reqid>             Poll a run until it completes, then show the result
   discovery [host...]         List registered agents and their scripts
 
 Global options:
@@ -600,8 +697,10 @@ Usage: ctrl-exec-cli run [--async] [--json] <host> [host...] --script <n> [-- ar
   --               Everything after -- is passed to the script as arguments
 
 Without --async, blocks until all hosts complete and prints full results.
-With --async, prints only the reqid (one line) and exits 0. Use
-'ctrl-exec-cli status <reqid>' to retrieve the result later.
+With --async, the server returns immediately and the agent runs the script
+detached (not bound by the API read timeout); per-host acceptance is printed to
+stderr and the bare reqid to stdout. Retrieve the result later with 'status',
+or block until done with 'wait'.
 
 Exit codes (synchronous):
   0   All hosts succeeded (script exit 0 on all)
@@ -627,13 +726,37 @@ Usage: ctrl-exec-cli status [--json] <reqid>
 Results are retained for 24 hours after the run completes. A 404 means the
 reqid is unknown, has expired, or predates result persistence.
 
-Output: reqid, script, hosts, completed timestamp, then per-host results
-in the same format as 'run'.
+Shows the current state: for a synchronous run, the stored per-host results;
+for an async run, each host's state (running / done / busy / error / expired),
+whether the run is complete, and which hosts are still pending. Use 'wait' to
+block until an async run finishes.
 
 Examples:
   ctrl-exec-cli status a1b2c3d4
   ctrl-exec-cli status a1b2c3d4 --json
   ctrl-exec-cli status \$(ctrl-exec-cli run db-01 --script backup --async)
+END
+}
+
+sub usage_wait { return <<'END';
+Usage: ctrl-exec-cli wait [--json] [--timeout <seconds>] <reqid>
+
+  <reqid>              Request ID returned by a previous (async) run
+  --timeout <seconds>  Give up after this long (default 300)
+  --json               Raw JSON output (the final record)
+
+Polls the run's status until it is complete, then prints the result (same
+output as 'status'). A synchronous run is already complete, so 'wait' returns
+at once.
+
+Exit codes:
+  0   Complete; all hosts succeeded
+  1   Complete; one or more hosts failed
+  2   Timed out while the run was still pending
+
+Examples:
+  ctrl-exec-cli wait a1b2c3d4
+  ctrl-exec-cli wait \$(ctrl-exec-cli run db-01 --script long-job --async) --timeout 600
 END
 }
 

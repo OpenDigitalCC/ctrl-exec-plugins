@@ -7,7 +7,8 @@ brand: odcc
 # cli
 
 A monolithic Perl script providing full CLI access to the ctrl-exec HTTP API.
-Covers all endpoints: health, ping, run, status, and discovery. Intended as a
+Covers every endpoint (health, ping, run, status, discovery) and the async run
+lifecycle (`run --async`, `status`, `wait`). Intended as a
 reference implementation and a portable tool for testing API functions before
 building higher-level interfaces.
 
@@ -120,24 +121,46 @@ the script is printed to stdout; stderr to stderr. The top-level reqid is
 printed as a header for log correlation. Exit code is 0 if all hosts
 succeeded, 1 if any host failed.
 
-With `--async`, the command submits the job, prints the reqid (one line to
-stdout), and exits 0 immediately. Use `status <reqid>` to retrieve the result.
+With `--async`, the request is sent with `"async": true`: the server returns
+immediately and the agent runs the script **detached**, so a long job is not
+bound by the API read timeout. Per-host acceptance (`accepted` / `busy` /
+`error`) is printed to stderr and the bare reqid to stdout (so
+`REQID=$(... --async)` captures just the id). Retrieve the result later with
+`status`, or block until it finishes with `wait`.
 
 ### status
 
-Retrieve the stored result for a completed run by reqid. Results are retained
-for 24 hours after the run completes.
+Show the current state of a run by reqid. Records are retained for 24 hours.
 
 ```
 ctrl-exec-cli status <reqid> [--json]
 ```
 
-The reqid is the top-level `reqid` field printed by `run`, or from the JSON
-response. A 404 means the reqid is unknown, has expired after 24 hours, or
-predates result persistence.
+The reqid is the top-level `reqid` printed by `run`, or from the JSON response.
+A 404 means the reqid is unknown, has expired, or predates result persistence.
 
-Output format is identical to `run`: reqid, script name, host list, completion
-timestamp, then per-host stdout/stderr blocks.
+The output adapts to the run:
+
+- **Synchronous run** - reqid, script, host list, completion timestamp, then
+  the per-host result blocks (as `run` prints them).
+- **Asynchronous run** - reqid, script, whether the run is `complete`, the list
+  of still-`pending` hosts, then each host's state: `running` / `done` (with
+  exit code and output) / `busy` / `error` / `expired`.
+
+Exit code is 0 unless the run is complete with one or more failed hosts (then 1).
+
+### wait
+
+Poll a run until it completes, then print the result (same output as `status`).
+A synchronous run is already complete, so `wait` returns at once; an async run
+is polled until done or the timeout elapses.
+
+```
+ctrl-exec-cli wait <reqid> [--timeout <seconds>] [--json]
+```
+
+`--timeout` defaults to 300 seconds. Exit code: `0` complete and all hosts
+succeeded, `1` complete with failures, `2` timed out while still pending.
 
 ### discovery
 
@@ -195,6 +218,9 @@ ctrl-exec-cli run db-01 --script long-job --async
 REQID=$(ctrl-exec-cli run db-01 --script long-job --async)
 ctrl-exec-cli status $REQID
 
+# Submit async and block until it finishes (up to 10 minutes)
+ctrl-exec-cli wait "$(ctrl-exec-cli run db-01 --script long-job --async)" --timeout 600
+
 # Retrieve a result by reqid
 ctrl-exec-cli status a1b2c3d4
 ctrl-exec-cli status a1b2c3d4 --json
@@ -214,8 +240,8 @@ ctrl-exec-cli run web-01 --script deploy
 - HTTPS is supported (HTTP::Tiny uses TLS via `IO::Socket::SSL` if available),
   but certificate verification requires `libio-socket-ssl-perl` to be installed.
   Without it, HTTPS connections proceed without CA verification.
-- There is no built-in polling loop for async jobs. Use `status <reqid>` to
-  check results, polling at a suitable interval in your own script.
+- `wait <reqid>` polls an async job to completion (every 2s, until `--timeout`).
+  For custom cadence or backoff, poll `status <reqid>` from your own script.
 - There is no retry logic. Connection errors and timeouts are reported and
   exit 1.
 - `discovery` without a host filter queries all registered agents via
