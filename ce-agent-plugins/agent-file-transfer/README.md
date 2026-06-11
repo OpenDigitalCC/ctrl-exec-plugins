@@ -31,6 +31,12 @@ without staging through the dispatcher. Useful when the dispatcher host has
 limited disk space, when transfers are large, or when the agents are on a fast
 local network relative to the dispatcher.
 
+The agent-side receiver (`agent-file-receive.sh`) ships a schema sidecar
+(`agent-file-receive.sh.schema.json`) so it is advertised as a typed tool via
+`/discovery` and the `ctrl-exec-mcp` bridge - its `port` / `output` / `timeout`
+arguments are typed, and it is flagged **destructive** (it writes a file to the
+receiving host).
+
 ## Relay via dispatcher
 
 If a direct network path between agents is not available - due to firewalling,

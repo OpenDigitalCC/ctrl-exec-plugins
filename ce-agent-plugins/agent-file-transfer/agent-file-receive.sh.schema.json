@@ -1,0 +1,19 @@
+{
+  "version": "1",
+  "description": "Receive a file archive over a one-shot throwaway-TLS listener and write it to a path on this host. Returns the listener cert fingerprint and the received byte count.",
+  "destructive": true,
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "port":    { "type": "integer", "minimum": 1, "maximum": 65535, "description": "TCP port to listen on." },
+      "output":  { "type": "string", "description": "Output path for the received archive on this host." },
+      "timeout": { "type": "integer", "description": "Seconds to wait for the connection and transfer (default 300)." }
+    },
+    "required": ["port", "output"]
+  },
+  "argv": [
+    { "arg": "port",    "flag": "--port" },
+    { "arg": "output",  "flag": "--output" },
+    { "arg": "timeout", "flag": "--timeout" }
+  ]
+}

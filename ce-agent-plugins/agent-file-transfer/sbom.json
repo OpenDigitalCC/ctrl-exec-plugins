@@ -1,0 +1,50 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "agent-file-transfer",
+      "version": "0.1.0",
+      "description": "Agent-to-agent file transfer for ctrl-exec: a throwaway-TLS receiver plus dispatcher-coordinated relay scripts"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "bash",
+      "version": "5.2",
+      "description": "GNU Bourne Again shell",
+      "purl": "pkg:deb/debian/bash"
+    },
+    {
+      "type": "library",
+      "name": "openssl",
+      "version": "3",
+      "description": "Throwaway-TLS listener/sender and certificate fingerprinting",
+      "purl": "pkg:deb/debian/openssl"
+    },
+    {
+      "type": "library",
+      "name": "tar",
+      "version": "1.35",
+      "description": "Archive packing and verification",
+      "purl": "pkg:deb/debian/tar"
+    },
+    {
+      "type": "library",
+      "name": "curl",
+      "version": "8",
+      "description": "HTTP client for the ctrl-exec API (coordinator scripts)",
+      "purl": "pkg:deb/debian/curl"
+    },
+    {
+      "type": "library",
+      "name": "jq",
+      "version": "1.7",
+      "description": "JSON parsing of API responses (coordinator scripts)",
+      "purl": "pkg:deb/debian/jq"
+    }
+  ]
+}
