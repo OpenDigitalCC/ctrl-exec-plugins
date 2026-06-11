@@ -36,8 +36,11 @@ Two cross-cutting notes under the current API:
 
 - `ce-api-plugins/ctrl-exec-mcp` - MCP bridge (LLM agents -> the API as tools).
 - `ce-api-plugins/ctrl-exec-cli` - Perl CLI client + `run-jobs` orchestrator.
+- `ce-api-plugins/rapidoc` - single-file RapiDoc browser interface / console.
 - `ce-agent-plugins/linux-audit` - read-only system audit.
 - `ce-agent-plugins/agent-file-transfer` - agent-to-agent transfers.
+- `ce-auth-plugins/rest-query` - delegate the auth decision to an HTTP endpoint.
+- `ce-auth-plugins/api-key-registry` - validate API keys against a local file.
 
 
 # API plugins (ce-api-plugins)
@@ -49,13 +52,7 @@ Dependencies, Installation, Configuration, Examples, Limitations.
 
 ## OpenAPI viewers (single-file browser UIs)
 
-rapidoc
-: Static single-file HTML pointing `spec-url` at `/openapi-live.json`, giving a
-  browser interface with live host/script enumeration and - because the live
-  spec now carries `x-ctrl-exec-scripts` - typed per-script arguments for
-  scripts that ship a sidecar. No build step, no server component beyond the
-  API. The live spec's per-load version stamp makes RapiDoc treat each load as
-  fresh. Done: open the HTML, point it at a running API, exercise an endpoint.
+(`rapidoc` is implemented - see *Already implemented*.)
 
 swagger-ui
 : The same against Swagger UI - the most widely recognised OpenAPI interface,
@@ -242,12 +239,6 @@ biscuit
   action, script, and target hosts. Self-contained and verifiable offline -
   suited to air-gapped deployments. Needs `biscuit-cli` or a Biscuit library.
 
-api-key-registry
-: Validate an opaque API key against a local registry file mapping keys to
-  usernames and privilege levels, re-read each request so rotation needs no
-  restart. Distinct from `htpasswd` (keys, not passwords; privilege encoded in
-  the registry).
-
 text-file
 : Validate against a plain `username:token` file. Minimal dependency, for
   embedded/minimal environments. Document the limits clearly: plaintext tokens,
@@ -284,10 +275,5 @@ radius
 http-session
 : Validate a session cookie or bearer token against a configurable HTTP
   endpoint, mapping the response code to a ctrl-exec exit code. For ctrl-exec
-  deployed behind an app that already manages sessions.
-
-rest-query
-: Forward the full request-context JSON to a configurable HTTP endpoint and map
-  the response status to a ctrl-exec exit code - a generic adapter letting any
-  external auth system integrate without writing a new hook. Document the simple
-  endpoint contract in the README.
+  deployed behind an app that already manages sessions. (Compare the implemented
+  `rest-query`, which delegates the whole decision to an HTTP endpoint.)
