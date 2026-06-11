@@ -1,0 +1,62 @@
+#!/bin/bash
+#
+# api-key-registry - ctrl-exec auth hook validating an opaque API key against a
+# local registry file that maps keys to an identity and a privilege level.
+#
+# The key is the caller's token (ENVEXEC_TOKEN). The registry is re-read on every
+# request, so keys can be added, removed, or re-levelled without restarting
+# anything. The action (ENVEXEC_ACTION) determines the privilege level required.
+#
+# Registry file - one entry per line, "#" comments and blank lines ignored:
+#
+#     <key>:<username>:<level>
+#
+#   level is one of (increasing):  ping  <  run  <  admin
+#   The username is for the operator's own audit; the decision uses the level.
+#
+# Action -> required level:
+#   ping, discovery   -> ping
+#   run, api, other   -> run
+#
+# Configuration (environment):
+#   API_KEY_REGISTRY  path to the registry file (default /etc/ctrl-exec/api-keys.conf)
+
+set -u
+trap 'exit 1' ERR            # any unexpected failure -> deny (fail closed)
+
+REGISTRY="${API_KEY_REGISTRY:-/etc/ctrl-exec/api-keys.conf}"
+TOKEN="${ENVEXEC_TOKEN:-}"
+ACTION="${ENVEXEC_ACTION:-run}"
+
+[ -n "$TOKEN" ]    || exit 2 # no credential presented -> bad credentials
+[ -r "$REGISTRY" ] || exit 1 # registry missing/unreadable -> deny (fail closed)
+
+level_num() {
+  case "$1" in
+    ping)  echo 1 ;;
+    run)   echo 2 ;;
+    admin) echo 3 ;;
+    *)     echo 0 ;;          # unknown level -> below ping (effectively denied)
+  esac
+}
+
+case "$ACTION" in
+  ping|discovery) need=1 ;;
+  *)              need=2 ;;   # run / api / anything else requires the run level
+esac
+
+# Find the key. First field is the key; last field is the level.
+match=""
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in ''|\#*) continue ;; esac
+  key="${line%%:*}"
+  [ "$key" = "$TOKEN" ] || continue
+  match="${line##*:}"
+  break
+done < "$REGISTRY"
+
+[ -n "$match" ] || exit 2     # key not in the registry -> bad credentials
+
+have="$(level_num "$match")"
+[ "$have" -ge "$need" ] || exit 3   # known key, not enough privilege
+exit 0                              # authorised
