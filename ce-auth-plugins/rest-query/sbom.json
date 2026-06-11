@@ -1,0 +1,29 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "rest-query",
+      "version": "0.1.0",
+      "description": "ctrl-exec auth hook that delegates the decision to an HTTP endpoint"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "bash",
+      "version": "5.2",
+      "description": "GNU Bourne Again shell",
+      "purl": "pkg:deb/debian/bash"
+    },
+    {
+      "type": "library",
+      "name": "curl",
+      "version": "8",
+      "description": "HTTP client used to call the decision endpoint",
+      "purl": "pkg:deb/debian/curl"
+    }
+  ]
+}

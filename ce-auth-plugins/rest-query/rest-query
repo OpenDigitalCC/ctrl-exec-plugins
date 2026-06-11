@@ -1,0 +1,45 @@
+#!/bin/bash
+#
+# rest-query - ctrl-exec auth hook that delegates the decision to an HTTP service.
+#
+# Forwards the request-context JSON (received on stdin) to a configurable HTTP
+# endpoint and maps the response status to a ctrl-exec exit code. This lets any
+# external auth system make the decision without writing a bespoke hook.
+#
+# Endpoint contract (what the service must return):
+#   200  authorised            -> exit 0
+#   401  bad credentials       -> exit 2
+#   403  insufficient privilege -> exit 3
+#   anything else / unreachable -> exit 1 (denied; fail closed)
+#
+# Configuration (environment):
+#   REST_QUERY_URL      decision endpoint URL (required; unset -> deny)
+#   REST_QUERY_TIMEOUT  request timeout in seconds (default 5)
+#
+# The full context is sent as the request body; the action and token are also
+# sent as headers for convenience. No stdout/stderr is produced.
+
+set -u
+trap 'exit 1' ERR            # any unexpected failure -> deny (fail closed)
+
+URL="${REST_QUERY_URL:-}"
+[ -n "$URL" ] || exit 1      # not configured -> deny
+
+body="$(cat)"                # request-context JSON on stdin
+
+status="$(
+  curl -s -o /dev/null -w '%{http_code}' \
+    --max-time "${REST_QUERY_TIMEOUT:-5}" \
+    -X POST "$URL" \
+    -H 'Content-Type: application/json' \
+    -H "X-CtrlExec-Action: ${ENVEXEC_ACTION:-}" \
+    ${ENVEXEC_TOKEN:+-H "Authorization: Bearer ${ENVEXEC_TOKEN}"} \
+    --data-binary "$body" 2>/dev/null
+)" || exit 1                 # curl failed / endpoint unreachable -> deny
+
+case "$status" in
+  200) exit 0 ;;             # authorised
+  401) exit 2 ;;             # bad credentials
+  403) exit 3 ;;             # insufficient privilege
+  *)   exit 1 ;;             # denied / unexpected -> fail closed
+esac
