@@ -1,0 +1,90 @@
+{
+  "info": {
+    "name": "ctrl-exec",
+    "description": "Requests for the ctrl-exec HTTP API. Set the variables in the ctrl-exec Local environment (baseUrl, token, host, script). Host and script names are not hardcoded - discover them at runtime with the Discovery request.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+        "description": "Liveness and version check. No authentication required."
+      }
+    },
+    {
+      "name": "Ping",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"hosts\": [\"{{host}}\"],\n  \"token\": \"{{token}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{baseUrl}}/ping", "host": ["{{baseUrl}}"], "path": ["ping"] },
+        "description": "Test mTLS connectivity to one or more agents."
+      }
+    },
+    {
+      "name": "Discovery",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/discovery", "host": ["{{baseUrl}}"], "path": ["discovery"] },
+        "description": "List registered agents and their scripts (with typed schemas where a sidecar is present)."
+      }
+    },
+    {
+      "name": "Run (sync)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"hosts\": [\"{{host}}\"],\n  \"script\": \"{{script}}\",\n  \"args\": [],\n  \"token\": \"{{token}}\"\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{baseUrl}}/run", "host": ["{{baseUrl}}"], "path": ["run"] },
+        "description": "Run an allowlisted script and block until all hosts complete. For long jobs use Run (async)."
+      }
+    },
+    {
+      "name": "Run (async)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Capture the reqid so the Status request can poll it.",
+              "try { var j = pm.response.json(); if (j && j.reqid) pm.environment.set('reqid', j.reqid); } catch (e) {}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"hosts\": [\"{{host}}\"],\n  \"script\": \"{{script}}\",\n  \"args\": [],\n  \"token\": \"{{token}}\",\n  \"async\": true\n}",
+          "options": { "raw": { "language": "json" } }
+        },
+        "url": { "raw": "{{baseUrl}}/run", "host": ["{{baseUrl}}"], "path": ["run"] },
+        "description": "Submit a detached run. Returns 202 with a reqid; the test script stores it in the environment for Status."
+      }
+    },
+    {
+      "name": "Status",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/status/{{reqid}}", "host": ["{{baseUrl}}"], "path": ["status", "{{reqid}}"] },
+        "description": "Fetch the state/result of a run by reqid. After Run (async) the reqid is set automatically; re-send to poll until complete is true."
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:7445" }
+  ]
+}

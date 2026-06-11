@@ -1,0 +1,22 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "postman",
+      "version": "0.1.0",
+      "description": "Postman collection and environment for the ctrl-exec HTTP API"
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "postman",
+      "version": "latest",
+      "description": "Postman API client (or newman) that imports and runs this collection",
+      "purl": "pkg:generic/postman"
+    }
+  ]
+}
