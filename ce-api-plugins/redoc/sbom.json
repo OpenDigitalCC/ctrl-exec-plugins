@@ -1,0 +1,22 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "redoc",
+      "version": "0.1.0",
+      "description": "Single-file ReDoc reference documentation for the ctrl-exec API"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "redoc",
+      "version": "latest",
+      "description": "ReDoc OpenAPI documentation renderer, loaded from a CDN at view time (or vendored locally)",
+      "purl": "pkg:npm/redoc"
+    }
+  ]
+}

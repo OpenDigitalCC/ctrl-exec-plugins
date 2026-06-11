@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ctrl-exec API reference</title>
+  <!--
+    Single-file ReDoc reference for the ctrl-exec API. Read-only, three-panel
+    documentation. Defaults to the static spec (/openapi.json); override with a
+    query string, e.g.  index.html?spec=/openapi-live.json
+    The ReDoc bundle loads from a CDN; vendor it locally for offline use.
+  -->
+  <style>html, body { margin: 0; }</style>
+</head>
+<body>
+  <div id="redoc"></div>
+  <script src="https://cdn.redocly.com/redoc/latest/bundles/redoc.standalone.js"></script>
+  <script>
+    // Spec URL: ?spec=<url> if given, else the static spec.
+    var spec = new URLSearchParams(location.search).get('spec') || '/openapi.json';
+    Redoc.init(spec, {}, document.getElementById('redoc'));
+  </script>
+</body>
+</html>
