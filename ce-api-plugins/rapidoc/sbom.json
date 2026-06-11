@@ -1,0 +1,22 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "rapidoc",
+      "version": "0.1.0",
+      "description": "Single-file RapiDoc browser interface for the ctrl-exec API"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "rapidoc",
+      "version": "latest",
+      "description": "RapiDoc OpenAPI web component, loaded from a CDN at view time (or vendored locally)",
+      "purl": "pkg:npm/rapidoc"
+    }
+  ]
+}
