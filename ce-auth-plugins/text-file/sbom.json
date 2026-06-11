@@ -1,0 +1,22 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "text-file",
+      "version": "0.1.0",
+      "description": "ctrl-exec auth hook validating username:token pairs against a plaintext file"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "bash",
+      "version": "5.2",
+      "description": "GNU Bourne Again shell (only dependency)",
+      "purl": "pkg:deb/debian/bash"
+    }
+  ]
+}

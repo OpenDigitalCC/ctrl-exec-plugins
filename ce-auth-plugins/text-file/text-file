@@ -1,0 +1,33 @@
+#!/bin/bash
+#
+# text-file - ctrl-exec auth hook validating a username/token pair against a
+# plaintext file of "username:token" lines. Minimal dependency, for embedded or
+# minimal environments with no other auth infrastructure.
+#
+# Configuration (environment):
+#   TEXT_FILE_AUTH   path to the token file (default /etc/ctrl-exec/tokens)
+#
+# File format - one entry per line, "#" comments and blank lines ignored:
+#   <username>:<token>
+#
+# Security: tokens are stored in plaintext. Keep the file mode 0600 and rotate
+# by editing it. See the README for the full caveats.
+
+set -u
+trap 'exit 1' ERR            # any unexpected failure -> deny (fail closed)
+
+USER_NAME="${ENVEXEC_USERNAME:-}"
+TOKEN="${ENVEXEC_TOKEN:-}"
+FILE="${TEXT_FILE_AUTH:-/etc/ctrl-exec/tokens}"
+
+[ -n "$USER_NAME" ] || exit 2   # no username -> bad credentials
+[ -n "$TOKEN" ]     || exit 2   # no token -> bad credentials
+[ -r "$FILE" ]      || exit 1   # file missing/unreadable -> deny (fail closed)
+
+target="$USER_NAME:$TOKEN"
+while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|\#*) continue ;; esac
+    [ "$line" = "$target" ] && exit 0
+done < "$FILE"
+
+exit 2                          # no matching username:token
