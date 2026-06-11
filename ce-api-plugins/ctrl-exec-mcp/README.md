@@ -65,6 +65,7 @@ credentials are committed.
 | `CTRLEXEC_TOKEN` | (none) | Auth token for the **stdio** transport (the operator's identity). |
 | `CTRLEXEC_TIMEOUT` | `300` | Seconds to poll an async run before giving up. |
 | `CTRLEXEC_MCP_HTTP` | (unset) | If set to `[host:]port`, serve Streamable HTTP instead of stdio. |
+| `CTRLEXEC_MCP_REFRESH` | `0` | stdio only: poll discovery every N seconds and push `tools/list_changed` when the tool set changes (`0` = off). |
 
 Host lists and script names are never hardcoded: they are discovered at runtime
 from the API (`GET /discovery`). On **stdio**, the bridge forwards
@@ -120,10 +121,16 @@ curl -s -X POST http://127.0.0.1:7446/ \
 ## Limitations
 
 - **Scope: MCP tools only.** Resources, prompts, and sampling are not exposed.
-- **`tools/list_changed`.** `tools/list` re-queries discovery on each call, so it
-  stays current without a restart, but the server does not yet *push* proactive
-  `tools/list_changed` notifications - a client that caches the tool list and
-  never re-lists will not see fleet changes mid-session.
+- **`tools/list_changed`.** `tools/list` always re-queries discovery, so it is
+  current on demand. Proactive `tools/list_changed` push is supported on the
+  **stdio** transport only, and is opt-in via `CTRLEXEC_MCP_REFRESH=<seconds>`:
+  the server then polls discovery on that interval and notifies the client when
+  the synthesised tool set actually changes (a version-label change that does not
+  alter the tools is not a change). It is off by default to avoid imposing
+  periodic fleet-wide discovery load. The **HTTP** transport does not push
+  (it would need the optional server→client SSE stream, which this transport
+  does not implement); HTTP clients should re-list as needed. The advertised
+  `listChanged` capability reflects this per transport.
 - **HTTP concurrency.** The HTTP transport is single-process and sequential
   (sessions live in memory, so it must not fork); a long-running `tools/call`
   blocks other requests while it polls. Suitable for one or a few clients. There

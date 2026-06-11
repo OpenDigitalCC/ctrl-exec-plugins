@@ -10,12 +10,13 @@ use CtrlExecMCP::Server;
 # --- fakes: a fixed catalogue and an echoing runner ---
 {
     package FakeCatalog;
-    sub new { bless { tools => $_[1] }, $_[0] }
+    sub new { bless { tools => $_[1], refresh => $_[2] }, $_[0] }
     sub list_tools { $_[0]{tools} }
     sub has_tool {
         my ($self, $name) = @_;
         return scalar grep { $_->{name} eq $name } @{ $self->{tools} };
     }
+    sub refresh { $_[0]{refresh} ? 1 : 0 }
 
     package FakeRunner;
     sub new { bless {}, shift }
@@ -36,6 +37,7 @@ sub new_server {
         runner  => FakeRunner->new,
         name    => 'ctrl-exec-mcp',
         version => '9.9.9',
+        list_changed => 1,
     );
 }
 
@@ -148,6 +150,35 @@ sub init { $_[0]->handle({ jsonrpc => '2.0', id => 0, method => 'initialize', pa
     my $s = new_server();
     my $r = $s->handle({ jsonrpc => '2.0' });   # no method
     is $r->{error}{code}, CtrlExecMCP::JsonRpc::JR_INVALID_REQUEST(), 'no method -> -32600';
+}
+
+# --- listChanged capability reflects whether the server can push ---
+{
+    my $with = new_server();   # built with list_changed => 1
+    ok init($with)->{result}{capabilities}{tools}{listChanged},
+        'listChanged advertised true when the server can push';
+
+    my $without = CtrlExecMCP::Server->new(
+        catalog => FakeCatalog->new([]), runner => FakeRunner->new);
+    ok !init($without)->{result}{capabilities}{tools}{listChanged},
+        'listChanged advertised false by default';
+}
+
+# --- poll_list_changed: notifies only when advertised and the set changed ---
+{
+    my $changed = CtrlExecMCP::Server->new(
+        catalog => FakeCatalog->new([], 1), runner => FakeRunner->new, list_changed => 1);
+    my $note = $changed->poll_list_changed;
+    is $note->{method}, 'notifications/tools/list_changed', 'change -> notification object';
+    ok !exists $note->{id}, 'notification has no id';
+
+    my $unchanged = CtrlExecMCP::Server->new(
+        catalog => FakeCatalog->new([], 0), runner => FakeRunner->new, list_changed => 1);
+    is $unchanged->poll_list_changed, undef, 'no change -> no notification';
+
+    my $disabled = CtrlExecMCP::Server->new(
+        catalog => FakeCatalog->new([], 1), runner => FakeRunner->new);  # list_changed off
+    is $disabled->poll_list_changed, undef, 'not advertised -> never notifies';
 }
 
 done_testing;

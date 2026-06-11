@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use FindBin qw($Bin);
 use lib "$Bin/lib";
+use POSIX ();
 use JSON::PP qw(encode_json decode_json);
 
 use CtrlExecMCP::Server;
@@ -30,15 +31,20 @@ our $VERSION = '0.1.0';
 #   CTRLEXEC_TOKEN      auth token for stdio (the operator's identity)
 #   CTRLEXEC_TIMEOUT    seconds to poll an async run before giving up (default 300)
 #   CTRLEXEC_MCP_HTTP   if set, serve Streamable HTTP on [host:]port instead of stdio
+#   CTRLEXEC_MCP_REFRESH  stdio only: poll discovery every N seconds and push a
+#                         tools/list_changed notification when the tool set
+#                         changes (0/unset = disabled, the default)
 
 my $API_URL = $ENV{CTRLEXEC_API_URL} // 'http://localhost:7445';
 my $TIMEOUT = $ENV{CTRLEXEC_TIMEOUT} // 300;
+my $REFRESH = ($ENV{CTRLEXEC_MCP_REFRESH} // 0) + 0;
 
 # Build a fully-wired MCP server for a given identity (token). Each call yields
 # its own catalogue/runner bound to that token, so the token flows through to
-# ctrl-exec's auth hook on every discovery and run.
+# ctrl-exec's auth hook on every discovery and run. $list_changed advertises the
+# tools/list_changed capability (only the stdio transport can push it).
 sub build_server {
-    my ($token) = @_;
+    my ($token, $list_changed) = @_;
     $token //= '';
     my $discovery = CtrlExecMCP::Discovery->new(url => $API_URL, token => $token);
     my $catalog   = CtrlExecMCP::Catalog->new(source => sub { $discovery->hosts });
@@ -49,6 +55,7 @@ sub build_server {
     return CtrlExecMCP::Server->new(
         catalog => $catalog, runner => $runner,
         name => 'ctrl-exec-mcp', version => $VERSION,
+        list_changed => $list_changed,
     );
 }
 
@@ -56,28 +63,57 @@ if (my $bind = $ENV{CTRLEXEC_MCP_HTTP}) {
     run_http($bind);
 }
 else {
-    run_stdio(build_server($ENV{CTRLEXEC_TOKEN}));
+    # stdio can push tools/list_changed; only advertise it when polling is on.
+    run_stdio(build_server($ENV{CTRLEXEC_TOKEN}, $REFRESH > 0), $REFRESH);
 }
 
 # --- stdio transport ---
 
 sub run_stdio {
-    my ($server) = @_;
-    binmode STDIN,  ':encoding(UTF-8)';
-    binmode STDOUT, ':encoding(UTF-8)';
+    my ($server, $refresh) = @_;
+    # Raw bytes: JSON::PP encode_json/decode_json work on UTF-8 octets, and
+    # sysread (used so we can interleave timed polling) needs an unlayered fh.
+    binmode STDIN,  ':raw';
+    binmode STDOUT, ':raw';
     STDOUT->autoflush(1);
 
-    while (defined(my $line = <STDIN>)) {
-        $line =~ s/\r?\n\z//;
-        next if $line eq '';
+    my $timeout = ($refresh && $refresh > 0) ? $refresh : undef;
+    # Prime the catalogue so the first poll has a baseline to compare against.
+    eval { $server->catalog->list_tools } if $timeout;
 
-        my $msg = eval { decode_json($line) };
-        my $response = $@
-            ? rpc_error(undef, JR_PARSE_ERROR, 'parse error')
-            : $server->handle($msg);
+    my $fno = fileno(STDIN);
+    my $buf = '';
+    while (1) {
+        my $rin = '';
+        vec($rin, $fno, 1) = 1;
+        my $nready = select(my $rout = $rin, undef, undef, $timeout);
 
-        next unless defined $response;   # notifications get no reply
-        print encode_json($response), "\n";
+        if (!defined $nready || $nready < 0) {
+            next if $! == POSIX::EINTR();   # interrupted by a signal; retry
+            last;
+        }
+        if ($nready == 0) {                 # idle tick: push tools/list_changed if changed
+            if (my $note = $server->poll_list_changed) {
+                print encode_json($note), "\n";
+            }
+            next;
+        }
+
+        my $chunk;
+        my $got = sysread(STDIN, $chunk, 65536);
+        last if !defined $got || $got == 0; # EOF / error
+        $buf .= $chunk;
+        while ($buf =~ s/^([^\n]*)\n//) {
+            my $line = $1;
+            $line =~ s/\r\z//;
+            next if $line eq '';
+            my $msg = eval { decode_json($line) };
+            my $response = $@
+                ? rpc_error(undef, JR_PARSE_ERROR, 'parse error')
+                : $server->handle($msg);
+            next unless defined $response;
+            print encode_json($response), "\n";
+        }
     }
 }
 

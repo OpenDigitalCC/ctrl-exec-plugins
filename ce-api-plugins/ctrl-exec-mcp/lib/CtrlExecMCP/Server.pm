@@ -29,9 +29,28 @@ sub new {
         name             => $opts{name}    // 'ctrl-exec-mcp',
         version          => $opts{version} // '0.0.0',
         protocol_version => $opts{protocol_version} // $PROTOCOL_VERSION,
+        # Whether this server will push tools/list_changed - advertised in the
+        # initialize capabilities and gating poll_list_changed. Set only on a
+        # transport that can deliver server-initiated messages (stdio).
+        list_changed     => $opts{list_changed} ? 1 : 0,
         initialized      => 0,
     };
     return bless $self, $class;
+}
+
+# The catalogue backing this server (for a transport that polls for changes).
+sub catalog { return $_[0]{catalog} }
+
+# If this server advertises tools/list_changed, refresh the catalogue and return
+# a tools/list_changed notification object when the tool set has actually
+# changed, else undef. The transport decides when to call this and how to
+# deliver the result.
+sub poll_list_changed {
+    my ($self) = @_;
+    return undef unless $self->{list_changed};
+    my $changed = eval { $self->{catalog}->refresh };
+    return undef unless $changed;
+    return { jsonrpc => '2.0', method => 'notifications/tools/list_changed' };
 }
 
 # Handle one decoded JSON-RPC message. Returns a response object to send, or
@@ -77,7 +96,9 @@ sub _initialize {
     # negotiate against $params->{protocolVersion}; for now we state ours.)
     return rpc_result($id, {
         protocolVersion => $self->{protocol_version},
-        capabilities    => { tools => { listChanged => JSON::PP::true } },
+        capabilities    => { tools => {
+            listChanged => $self->{list_changed} ? JSON::PP::true : JSON::PP::false,
+        } },
         serverInfo      => { name => $self->{name}, version => $self->{version} },
     });
 }
