@@ -10,30 +10,35 @@ use CtrlExecMCP::Server;
 use CtrlExecMCP::JsonRpc qw(rpc_error JR_PARSE_ERROR);
 use CtrlExecMCP::Discovery;
 use CtrlExecMCP::Catalog;
+use CtrlExecMCP::Api;
+use CtrlExecMCP::Runner;
 
 our $VERSION = '0.1.0';
 
 # ctrl-exec-mcp - a Model Context Protocol server that bridges an MCP client
-# (e.g. an LLM agent) to the ctrl-exec HTTP API. This is the protocol core, the
-# stdio transport, and the discovery-backed tool catalogue; tool execution
-# (via /run) is injected and wired in a subsequent commit.
+# (e.g. an LLM agent) to the ctrl-exec HTTP API: the protocol core, the stdio
+# transport, a discovery-backed tool catalogue, and /run-backed execution.
 #
 # Transport: MCP stdio - one JSON-RPC 2.0 message per line on STDIN, one
 # response line on STDOUT, UTF-8, no embedded newlines.
 #
 # Configuration (operator-supplied, no embedded credentials):
-#   CTRLEXEC_API_URL  base URL of ctrl-exec-api (default http://localhost:7445)
-#   CTRLEXEC_TOKEN    auth token forwarded to the API for the auth hook
+#   CTRLEXEC_API_URL    base URL of ctrl-exec-api (default http://localhost:7445)
+#   CTRLEXEC_TOKEN      auth token forwarded to the API for the auth hook
+#   CTRLEXEC_TIMEOUT    seconds to poll an async run before giving up (default 300)
 
-my $discovery = CtrlExecMCP::Discovery->new(
-    url   => $ENV{CTRLEXEC_API_URL} // 'http://localhost:7445',
-    token => $ENV{CTRLEXEC_TOKEN}   // '',
+my $api_url = $ENV{CTRLEXEC_API_URL} // 'http://localhost:7445';
+my $token   = $ENV{CTRLEXEC_TOKEN}   // '';
+
+my $discovery = CtrlExecMCP::Discovery->new(url => $api_url, token => $token);
+my $catalog   = CtrlExecMCP::Catalog->new(source => sub { $discovery->hosts });
+
+my $api    = CtrlExecMCP::Api->new(url => $api_url, token => $token);
+my $runner = CtrlExecMCP::Runner->new(
+    catalog => $catalog,
+    api     => $api,
+    timeout => ($ENV{CTRLEXEC_TIMEOUT} // 300),
 );
-my $catalog = CtrlExecMCP::Catalog->new(source => sub { $discovery->hosts });
-
-# Execution is wired to /run in the next commit; until then calls report an
-# error result rather than running anything.
-my $runner = StubRunner->new;
 
 my $server = CtrlExecMCP::Server->new(
     catalog => $catalog,
@@ -58,9 +63,3 @@ while (defined(my $line = <STDIN>)) {
     next unless defined $response;   # notifications get no reply
     print encode_json($response), "\n";
 }
-
-# --- placeholder runner (replaced by the /run-backed runner) ---
-
-package StubRunner;
-sub new  { bless {}, shift }
-sub call { die "execution is not wired yet\n" }

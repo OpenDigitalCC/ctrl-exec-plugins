@@ -24,12 +24,14 @@ client and the ctrl-exec HTTP API to the fleet. It runs on the control host and
 consumes `ctrl-exec-api`; it holds no fleet state of its own.
 
 This plugin is built incrementally. It currently provides the JSON-RPC 2.0
-protocol core, the MCP lifecycle (`initialize`), the stdio transport, and a
-discovery-backed tool catalogue: `tools/list` reflects the live fleet, with
-one tool per script synthesised from `GET /discovery` and grouped by schema
-version (a script split across versions appears as `name@<version>` tools, each
-scoped to the hosts running that version). `/run`-backed execution and the
-Streamable HTTP transport land in subsequent commits (see *Limitations*).
+protocol core, the MCP lifecycle (`initialize`), the stdio transport, a
+discovery-backed tool catalogue, and `/run`-backed execution. `tools/list`
+reflects the live fleet, with one tool per script synthesised from
+`GET /discovery` and grouped by schema version (a script split across versions
+appears as `name@<version>` tools, each scoped to the hosts running that
+version). `tools/call` dispatches asynchronously and polls for the result, so a
+long-running script is not bound by the API read timeout. The Streamable HTTP
+transport lands in a subsequent commit (see *Limitations*).
 
 ## Dependencies
 
@@ -95,12 +97,15 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
 ## Limitations
 
 - **Scope: MCP tools only.** Resources, prompts, and sampling are not exposed.
-- **Build status.** The protocol core, stdio transport, and discovery-backed
-  tool catalogue are in place. `/run`-backed execution over the async path, the
-  Streamable HTTP transport, per-call argument validation, and proactive
-  `tools/list_changed` notifications are added in later commits; until
-  execution lands, `tools/call` returns an error result. `tools/list` re-queries
-  discovery on each call, so it stays current without a restart.
+- **Build status.** The protocol core, stdio transport, discovery-backed tool
+  catalogue, and `/run`-backed execution are in place. The Streamable HTTP
+  transport, per-call argument validation against the tool schema, and proactive
+  `tools/list_changed` notifications are added in later commits. `tools/list`
+  re-queries discovery on each call, so it stays current without a restart.
+- **Argument handling.** `tools/call` validates only that requested hosts are in
+  the tool's set; full validation of the named arguments against the schema is a
+  later commit. The agent's allowlist and auth hook remain the authoritative
+  controls regardless.
 - **Long-running jobs.** Once execution is wired, `tools/call` dispatches via
   the ctrl-exec async path (`POST /run` with `async`, then poll
   `GET /status/{reqid}`) so calls are not bound by the API read timeout; the
