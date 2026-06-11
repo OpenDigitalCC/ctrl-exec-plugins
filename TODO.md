@@ -37,10 +37,14 @@ Two cross-cutting notes under the current API:
 - `ce-api-plugins/ctrl-exec-mcp` - MCP bridge (LLM agents -> the API as tools).
 - `ce-api-plugins/ctrl-exec-cli` - Perl CLI client + `run-jobs` orchestrator.
 - `ce-api-plugins/rapidoc` - single-file RapiDoc browser interface / console.
+- `ce-api-plugins/swagger-ui` - single-file Swagger UI browser interface.
+- `ce-api-plugins/redoc` - single-file ReDoc reference documentation.
+- `ce-api-plugins/bruno` - git-committable Bruno API collection.
 - `ce-agent-plugins/linux-audit` - read-only system audit.
 - `ce-agent-plugins/agent-file-transfer` - agent-to-agent transfers.
 - `ce-auth-plugins/rest-query` - delegate the auth decision to an HTTP endpoint.
 - `ce-auth-plugins/api-key-registry` - validate API keys against a local file.
+- `ce-auth-plugins/unix-user` - authorise by local Unix identity / group.
 
 
 # API plugins (ce-api-plugins)
@@ -52,19 +56,12 @@ Dependencies, Installation, Configuration, Examples, Limitations.
 
 ## OpenAPI viewers (single-file browser UIs)
 
-(`rapidoc` is implemented - see *Already implemented*.)
-
-swagger-ui
-: The same against Swagger UI - the most widely recognised OpenAPI interface,
-  worth including for first-time familiarity. Single HTML file, points at
-  `/openapi-live.json`, so it likewise renders the typed-argument schemas.
-
-redoc
-: Read-only reference rendering of the **static** `/openapi.json` (no live
-  enumeration, no `x-ctrl-exec-scripts`, no try-it execution). For publishing
-  API reference docs on a static site or wiki. Single HTML file.
+(`rapidoc`, `swagger-ui`, and `redoc` are implemented - see *Already
+implemented*.)
 
 ## HTTP collections
+
+(`bruno` is implemented - see *Already implemented*.)
 
 postman
 : Postman collection importable from `openapi.json`, with an environment
@@ -72,11 +69,6 @@ postman
   examples and documents async dispatch (`POST /run` `"async": true` -> `202` +
   reqid -> poll `/status/{reqid}`). Done: import, set the environment, run the
   ping/discovery/sync-run/async-run examples successfully.
-
-bruno
-: The Postman collection in Bruno's plain-text, git-committable format - open
-  source and increasingly adopted. Same endpoint coverage and async
-  documentation; the collection files commit directly to the repo.
 
 insomnia
 : The same collection for Insomnia, for sites where it is the established HTTP
@@ -255,11 +247,6 @@ pam
 : Validate via PAM, delegating to the host's PAM stack (Unix passwords, SSSD/
   LDAP, smart cards, etc.) through one interface. Needs to run as root or with
   PAM permissions. The most flexible option where PAM is already configured.
-
-unix-user
-: Check the username exists as a local Unix user and optionally belongs to a
-  group - no password check. For trusted internal networks where identity is
-  established upstream (SSH forced commands, PAM pre-auth). Zero dependencies.
 
 htpasswd
 : Validate username/password against an Apache htpasswd file (bcrypt/SHA). No
