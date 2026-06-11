@@ -23,10 +23,12 @@ The bridge is a thin translation layer: it speaks MCP (JSON-RPC 2.0) to the
 client and the ctrl-exec HTTP API to the fleet. It runs on the control host and
 consumes `ctrl-exec-api`; it holds no fleet state of its own.
 
-This plugin is built incrementally. This commit provides the JSON-RPC 2.0
-protocol core, the MCP lifecycle (`initialize`), the `tools/list` and
-`tools/call` dispatch, and the stdio transport. The discovery-backed tool
-catalogue, schema-versioned tool synthesis, `/run`-backed execution, and the
+This plugin is built incrementally. It currently provides the JSON-RPC 2.0
+protocol core, the MCP lifecycle (`initialize`), the stdio transport, and a
+discovery-backed tool catalogue: `tools/list` reflects the live fleet, with
+one tool per script synthesised from `GET /discovery` and grouped by schema
+version (a script split across versions appears as `name@<version>` tools, each
+scoped to the hosts running that version). `/run`-backed execution and the
 Streamable HTTP transport land in subsequent commits (see *Limitations*).
 
 ## Dependencies
@@ -93,11 +95,12 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
 ## Limitations
 
 - **Scope: MCP tools only.** Resources, prompts, and sampling are not exposed.
-- **Build status.** This commit is the protocol core and stdio transport. The
-  tool catalogue from `/discovery` (with schema-versioned tool synthesis),
-  `/run`-backed execution over the async path, the Streamable HTTP transport,
-  and per-call argument validation are added in later commits; until then the
-  server advertises an empty tool set.
+- **Build status.** The protocol core, stdio transport, and discovery-backed
+  tool catalogue are in place. `/run`-backed execution over the async path, the
+  Streamable HTTP transport, per-call argument validation, and proactive
+  `tools/list_changed` notifications are added in later commits; until
+  execution lands, `tools/call` returns an error result. `tools/list` re-queries
+  discovery on each call, so it stays current without a restart.
 - **Long-running jobs.** Once execution is wired, `tools/call` dispatches via
   the ctrl-exec async path (`POST /run` with `async`, then poll
   `GET /status/{reqid}`) so calls are not bound by the API read timeout; the
