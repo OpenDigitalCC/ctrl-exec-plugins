@@ -89,11 +89,24 @@ my $ACCEPT = { ok => 1, status => 202, data => { reqid => 'r1' } };
     is_deeply $api->{runs}[0]{args}, ['90'],                'argv default applied';
 }
 
-# --- host not in the tool's enum is rejected ---
+# --- host not in the tool's enum is rejected before dispatch ---
 {
-    my $r = runner(tools => { 'check-disk' => $TYPED }, api => FakeApi->new(run => $ACCEPT));
-    eval { $r->call('check-disk', { hosts => ['evil-01'] }) };
-    like $@, qr/hosts not available/, 'out-of-enum host rejected';
+    my $api = FakeApi->new(run => $ACCEPT);
+    my $r = runner(tools => { 'check-disk' => $TYPED }, api => $api);
+    my $res = $r->call('check-disk', { hosts => ['evil-01'] });
+    ok $res->{isError},                              'out-of-enum host -> isError';
+    like $res->{content}[0]{text}, qr/hosts not available/, 'host problem explained';
+    is scalar @{ $api->{runs} }, 0,                  'no dispatch on invalid hosts';
+}
+
+# --- a named argument failing the schema is rejected before dispatch ---
+{
+    my $api = FakeApi->new(run => $ACCEPT);
+    my $r = runner(tools => { 'check-disk' => $TYPED }, api => $api);
+    my $res = $r->call('check-disk', { threshold => 'high' });   # not an integer
+    ok $res->{isError},                              'bad argument type -> isError';
+    like $res->{content}[0]{text}, qr/Invalid arguments/, 'validation error reported';
+    is scalar @{ $api->{runs} }, 0,                  'no dispatch on invalid arguments';
 }
 
 # --- generic tool: positional args passthrough ---

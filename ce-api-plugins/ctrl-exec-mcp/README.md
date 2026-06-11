@@ -23,15 +23,14 @@ The bridge is a thin translation layer: it speaks MCP (JSON-RPC 2.0) to the
 client and the ctrl-exec HTTP API to the fleet. It runs on the control host and
 consumes `ctrl-exec-api`; it holds no fleet state of its own.
 
-This plugin is built incrementally. It currently provides the JSON-RPC 2.0
-protocol core, the MCP lifecycle (`initialize`), the stdio transport, a
-discovery-backed tool catalogue, and `/run`-backed execution. `tools/list`
-reflects the live fleet, with one tool per script synthesised from
-`GET /discovery` and grouped by schema version (a script split across versions
-appears as `name@<version>` tools, each scoped to the hosts running that
-version). `tools/call` dispatches asynchronously and polls for the result, so a
-long-running script is not bound by the API read timeout. The Streamable HTTP
-transport lands in a subsequent commit (see *Limitations*).
+The bridge speaks MCP over both stdio and Streamable HTTP. `tools/list` reflects
+the live fleet, with one tool per script synthesised from `GET /discovery` and
+grouped by schema version (a script split across versions appears as
+`name@<version>` tools, each scoped to the hosts running that version).
+`tools/call` validates its arguments against the tool's schema, then dispatches
+asynchronously and polls for the result, so a long-running script is not bound
+by the API read timeout. See *Limitations* for what is intentionally out of
+scope.
 
 ## Dependencies
 
@@ -121,19 +120,20 @@ curl -s -X POST http://127.0.0.1:7446/ \
 ## Limitations
 
 - **Scope: MCP tools only.** Resources, prompts, and sampling are not exposed.
-- **Build status.** The protocol core, the stdio and Streamable HTTP transports,
-  the discovery-backed tool catalogue, and `/run`-backed execution are in place.
-  Per-call argument validation against the tool schema and proactive
-  `tools/list_changed` notifications are added in a later commit. `tools/list`
-  re-queries discovery on each call, so it stays current without a restart.
+- **`tools/list_changed`.** `tools/list` re-queries discovery on each call, so it
+  stays current without a restart, but the server does not yet *push* proactive
+  `tools/list_changed` notifications - a client that caches the tool list and
+  never re-lists will not see fleet changes mid-session.
 - **HTTP concurrency.** The HTTP transport is single-process and sequential
   (sessions live in memory, so it must not fork); a long-running `tools/call`
   blocks other requests while it polls. Suitable for one or a few clients. There
   is no built-in TLS — terminate TLS at a reverse proxy.
-- **Argument handling.** `tools/call` validates only that requested hosts are in
-  the tool's set; full validation of the named arguments against the schema is a
-  later commit. The agent's allowlist and auth hook remain the authoritative
-  controls regardless.
+- **Argument validation.** `tools/call` checks the requested hosts against the
+  tool's host set and validates the named arguments against the tool's schema
+  (types, enum/const, required, numeric and length bounds, array items, closed
+  objects) before dispatch, failing fast with a clear message. This is a
+  pragmatic JSON Schema subset, not a full validator; the agent's allowlist and
+  auth hook remain the authoritative controls regardless.
 - **Long-running jobs.** `tools/call` dispatches via the ctrl-exec async path
   (`POST /run` with `async`, then poll `GET /status/{reqid}`) so calls are not
   bound by the API read timeout; the client blocks on the call while the bridge

@@ -3,6 +3,7 @@ package CtrlExecMCP::Runner;
 use strict;
 use warnings;
 use JSON::PP ();
+use CtrlExecMCP::Validate ();
 
 # Executes an MCP tools/call against the ctrl-exec API. It resolves the tool to
 # its script and target hosts (via the shared catalogue), renders the named
@@ -35,6 +36,11 @@ sub call {
     my ($self, $name, $args) = @_;
     my $tool = $self->{catalog}->tool($name) or die "unknown tool: $name\n";
 
+    # Validate the call arguments against the tool before dispatching anything,
+    # so bad input fails fast with a message the model can act on.
+    my @errors = _validate_args($tool, $args);
+    return _error_result("Invalid arguments for $name: " . join('; ', @errors)) if @errors;
+
     my $hosts    = _resolve_hosts($tool, $args);
     my $run_args = defined $tool->{argv}
         ? _render_argv($tool->{argv}, $args, _defaults($tool))
@@ -53,19 +59,46 @@ sub call {
     return _shape_result($record, $reqid);
 }
 
-# --- host resolution ---
+# --- argument validation ---
+
+# Returns a list of human-readable problems with the call arguments (empty when
+# valid): the requested hosts must be a subset of the tool's hosts, and the
+# named arguments must satisfy the tool's schema (or, for an untyped tool, the
+# positional `args` must be an array).
+sub _validate_args {
+    my ($tool, $args) = @_;
+    my @e;
+
+    my $req = $args->{hosts};
+    if (defined $req) {
+        if (ref $req ne 'ARRAY') {
+            push @e, 'hosts must be an array';
+        }
+        else {
+            my %ok = map { $_ => 1 } @{ $tool->{hosts} || [] };
+            my @bad = grep { !$ok{$_} } @$req;
+            push @e, 'hosts not available for this tool: ' . join(', ', @bad) if @bad;
+        }
+    }
+
+    if (ref $tool->{schema} eq 'HASH' && ref $tool->{schema}{arguments} eq 'HASH') {
+        my %named = %$args;
+        delete $named{hosts};          # bridge-injected, not part of the script schema
+        push @e, @{ CtrlExecMCP::Validate::check($tool->{schema}{arguments}, \%named) };
+    }
+    elsif (exists $args->{args} && ref $args->{args} ne 'ARRAY') {
+        push @e, 'args must be an array of strings';
+    }
+
+    return @e;
+}
+
+# --- host resolution (arguments already validated) ---
 
 sub _resolve_hosts {
     my ($tool, $args) = @_;
-    my $allowed = $tool->{hosts} || [];
-    my $req     = $args->{hosts};
-
-    return $allowed if !defined $req || (ref $req eq 'ARRAY' && !@$req);
-    die "hosts must be an array\n" unless ref $req eq 'ARRAY';
-
-    my %ok = map { $_ => 1 } @$allowed;
-    my @bad = grep { !$ok{$_} } @$req;
-    die "hosts not available for this tool: @{[ join ', ', @bad ]}\n" if @bad;
+    my $req = $args->{hosts};
+    return $tool->{hosts} || [] if !defined $req || (ref $req eq 'ARRAY' && !@$req);
     return $req;
 }
 
