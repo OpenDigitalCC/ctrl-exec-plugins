@@ -1,0 +1,60 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use FindBin qw($Bin);
+use lib "$Bin/lib";
+use JSON::PP qw(encode_json decode_json);
+
+use CtrlExecMCP::Server;
+use CtrlExecMCP::JsonRpc qw(rpc_error JR_PARSE_ERROR);
+
+our $VERSION = '0.1.0';
+
+# ctrl-exec-mcp - a Model Context Protocol server that bridges an MCP client
+# (e.g. an LLM agent) to the ctrl-exec HTTP API. This is the protocol core and
+# the stdio transport; the tool catalogue (from /discovery) and execution
+# (via /run) are injected and wired in subsequent commits.
+#
+# Transport: MCP stdio - one JSON-RPC 2.0 message per line on STDIN, one
+# response line on STDOUT, UTF-8, no embedded newlines.
+
+# Until the discovery-backed catalogue and the /run-backed runner land, the
+# server speaks the full protocol with an empty tool set.
+my $catalog = StubCatalog->new;
+my $runner  = StubRunner->new;
+
+my $server = CtrlExecMCP::Server->new(
+    catalog => $catalog,
+    runner  => $runner,
+    name    => 'ctrl-exec-mcp',
+    version => $VERSION,
+);
+
+binmode STDIN,  ':encoding(UTF-8)';
+binmode STDOUT, ':encoding(UTF-8)';
+STDOUT->autoflush(1);
+
+while (defined(my $line = <STDIN>)) {
+    $line =~ s/\r?\n\z//;
+    next if $line eq '';
+
+    my $msg = eval { decode_json($line) };
+    my $response = $@
+        ? rpc_error(undef, JR_PARSE_ERROR, 'parse error')
+        : $server->handle($msg);
+
+    next unless defined $response;   # notifications get no reply
+    print encode_json($response), "\n";
+}
+
+# --- placeholder backends (replaced by the discovery/run backends) ---
+
+package StubCatalog;
+sub new       { bless {}, shift }
+sub list_tools { [] }
+sub has_tool   { 0 }
+
+package StubRunner;
+sub new  { bless {}, shift }
+sub call { die "no tools are available yet\n" }
