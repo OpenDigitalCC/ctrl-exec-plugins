@@ -1,0 +1,29 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "unix-user",
+      "version": "0.1.0",
+      "description": "ctrl-exec auth hook authorising by local Unix user identity and optional group membership"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "bash",
+      "version": "5.2",
+      "description": "GNU Bourne Again shell",
+      "purl": "pkg:deb/debian/bash"
+    },
+    {
+      "type": "library",
+      "name": "coreutils",
+      "version": "9",
+      "description": "Provides id(1) for user and group lookups",
+      "purl": "pkg:deb/debian/coreutils"
+    }
+  ]
+}

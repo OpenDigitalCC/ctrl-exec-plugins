@@ -1,0 +1,33 @@
+#!/bin/bash
+#
+# unix-user - ctrl-exec auth hook that authorises by local Unix identity.
+#
+# Authorises the request if the caller's username exists as a local user account
+# on this host, and (optionally) belongs to a required group. There is NO
+# password check: this is for trusted internal networks where identity is
+# already established upstream (SSH ForceCommand, PAM pre-authentication, a
+# trusted reverse proxy, etc.).
+#
+# Configuration (environment):
+#   UNIX_USER_GROUP   if set, the user must be a member of this group (else the
+#                     request is denied with insufficient privilege)
+#
+# Identity comes from ENVEXEC_USERNAME (the ctrl-exec request username).
+
+set -u
+trap 'exit 1' ERR            # any unexpected failure -> deny (fail closed)
+
+USER_NAME="${ENVEXEC_USERNAME:-}"
+GROUP="${UNIX_USER_GROUP:-}"
+
+[ -n "$USER_NAME" ] || exit 2               # no username presented -> bad credentials
+id -u -- "$USER_NAME" >/dev/null 2>&1 || exit 2   # not a local user -> bad credentials
+
+if [ -n "$GROUP" ]; then
+    if id -nG -- "$USER_NAME" 2>/dev/null | tr ' ' '\n' | grep -qx -- "$GROUP"; then
+        exit 0                              # member of the required group
+    fi
+    exit 3                                  # known user, not in the group
+fi
+
+exit 0                                      # user exists; no group required
