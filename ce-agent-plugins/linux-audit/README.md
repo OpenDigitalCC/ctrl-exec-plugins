@@ -15,6 +15,12 @@ checks and ad-hoc operational review.
 
 All subcommands are read-only. No system state is modified.
 
+A schema sidecar (`linux-audit.sh.schema.json`) ships alongside the script: the
+agent advertises it via `/discovery`, so this plugin appears as a **typed,
+read-only tool** in `/openapi-live.json` and in the `ctrl-exec-mcp` bridge - the
+subcommand is offered as a constrained enum and the `read_only` flag tells an
+LLM client the operation is safe.
+
 ## Dependencies
 
 All dependencies are available as Debian trixie system packages. No additional

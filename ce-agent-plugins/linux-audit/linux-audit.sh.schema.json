@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "description": "Read-only Linux system audit: recent logins, authentication failures, listening ports, service status, disk usage, memory/swap, and open file-descriptor counts. Makes no changes.",
+  "read_only": true,
+  "idempotent": true,
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "subcommand": {
+        "type": "string",
+        "description": "Which audit to run.",
+        "enum": ["logins", "auth-failures", "ports", "services", "disk", "memory", "open-files", "all"]
+      }
+    },
+    "required": ["subcommand"]
+  },
+  "argv": [ { "arg": "subcommand" } ]
+}
