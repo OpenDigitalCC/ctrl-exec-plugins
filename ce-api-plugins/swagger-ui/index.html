@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ctrl-exec API</title>
+  <!--
+    Single-file Swagger UI for the ctrl-exec API. Loads the live spec from the
+    same origin (/openapi-live.json) by default; override with a query string,
+    e.g.  index.html?spec=https://ctrl-exec.example:7445/openapi-live.json
+    Swagger UI assets load from a CDN; vendor them locally for offline use.
+  -->
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css">
+  <style>html, body { margin: 0; }</style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+  <script>
+    // Spec URL: ?spec=<url> if given, else the same-origin live spec.
+    var spec = new URLSearchParams(location.search).get('spec')
+            || '/openapi-live.json';
+    window.ui = SwaggerUIBundle({
+      url: spec,
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      tryItOutEnabled: true,
+    });
+  </script>
+</body>
+</html>
