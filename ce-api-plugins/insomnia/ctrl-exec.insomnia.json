@@ -1,0 +1,103 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-06-11T00:00:00.000Z",
+  "__export_source": "ctrl-exec-plugins:insomnia",
+  "resources": [
+    {
+      "_id": "wrk_ctrlexec",
+      "_type": "workspace",
+      "name": "ctrl-exec",
+      "description": "Requests for the ctrl-exec HTTP API. Set the Base environment (baseUrl, token, host, script). Discover hosts/scripts at runtime with the Discovery request.",
+      "scope": "collection"
+    },
+    {
+      "_id": "env_base",
+      "_type": "environment",
+      "parentId": "wrk_ctrlexec",
+      "name": "Base",
+      "data": {
+        "baseUrl": "http://localhost:7445",
+        "host": "web-01",
+        "script": "check-disk",
+        "token": "",
+        "reqid": ""
+      }
+    },
+    {
+      "_id": "req_health",
+      "_type": "request",
+      "parentId": "wrk_ctrlexec",
+      "name": "Health",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/health",
+      "metaSortKey": -6,
+      "description": "Liveness and version check. No authentication required."
+    },
+    {
+      "_id": "req_ping",
+      "_type": "request",
+      "parentId": "wrk_ctrlexec",
+      "name": "Ping",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/ping",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"hosts\": [\"{{ _.host }}\"],\n  \"token\": \"{{ _.token }}\"\n}"
+      },
+      "metaSortKey": -5,
+      "description": "Test mTLS connectivity to one or more agents."
+    },
+    {
+      "_id": "req_discovery",
+      "_type": "request",
+      "parentId": "wrk_ctrlexec",
+      "name": "Discovery",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/discovery",
+      "metaSortKey": -4,
+      "description": "List registered agents and their scripts (typed where a sidecar is present)."
+    },
+    {
+      "_id": "req_run_sync",
+      "_type": "request",
+      "parentId": "wrk_ctrlexec",
+      "name": "Run (sync)",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/run",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"hosts\": [\"{{ _.host }}\"],\n  \"script\": \"{{ _.script }}\",\n  \"args\": [],\n  \"token\": \"{{ _.token }}\"\n}"
+      },
+      "metaSortKey": -3,
+      "description": "Run an allowlisted script and block until all hosts complete. For long jobs use Run (async)."
+    },
+    {
+      "_id": "req_run_async",
+      "_type": "request",
+      "parentId": "wrk_ctrlexec",
+      "name": "Run (async)",
+      "method": "POST",
+      "url": "{{ _.baseUrl }}/run",
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"hosts\": [\"{{ _.host }}\"],\n  \"script\": \"{{ _.script }}\",\n  \"args\": [],\n  \"token\": \"{{ _.token }}\",\n  \"async\": true\n}"
+      },
+      "metaSortKey": -2,
+      "description": "Submit a detached run; returns 202 with a reqid. Copy the reqid into the environment (or reference this response) for Status."
+    },
+    {
+      "_id": "req_status",
+      "_type": "request",
+      "parentId": "wrk_ctrlexec",
+      "name": "Status",
+      "method": "GET",
+      "url": "{{ _.baseUrl }}/status/{{ _.reqid }}",
+      "metaSortKey": -1,
+      "description": "Fetch the state/result of a run by reqid. Set reqid in the environment; re-send to poll until complete is true."
+    }
+  ]
+}
