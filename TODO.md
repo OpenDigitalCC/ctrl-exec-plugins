@@ -13,9 +13,10 @@ considerations under the current API, and what a completed plugin looks like.
 Grouped by category; within a category, loosely by theme.
 
 Every plugin is a folder under its category with `README.md`, `LICENSE`, and a
-CycloneDX `sbom.json`, and must pass `tools/validate-plugin` (required files,
-the category's required README headings, and the category checks). Read the
-category README before starting one.
+CycloneDX `sbom.json`, ships a `test/` suite (a `run.sh` runner plus a
+committed `TEST-REPORT.md`), and must pass `tools/validate-plugin` (required
+files, the category's required README headings, and the category checks). Read
+the category README and `CONTRIBUTING.md` before starting one.
 
 Work one item at a time, confirm scope before building, and establish ground
 truth from the API/agent contract first. Completed items are removed; finished
@@ -32,41 +33,12 @@ Two cross-cutting notes under the current API:
   `ctrl-exec-mcp` bridge. See `docs/SCHEMA-SIDECAR.md` in the ctrl-exec repo.
 
 
-## Already implemented
-
-- `ce-api-plugins/ctrl-exec-mcp` - MCP bridge (LLM agents -> the API as tools).
-- `ce-api-plugins/ctrl-exec-cli` - Perl CLI client + `run-jobs` orchestrator.
-- `ce-api-plugins/rapidoc` - single-file RapiDoc browser interface / console.
-- `ce-api-plugins/swagger-ui` - single-file Swagger UI browser interface.
-- `ce-api-plugins/redoc` - single-file ReDoc reference documentation.
-- `ce-api-plugins/bruno` - git-committable Bruno API collection.
-- `ce-api-plugins/postman` - Postman collection + environment.
-- `ce-api-plugins/insomnia` - Insomnia collection (v4 export).
-- `ce-agent-plugins/linux-audit` - read-only system audit.
-- `ce-agent-plugins/agent-file-transfer` - agent-to-agent transfers.
-- `ce-auth-plugins/rest-query` - delegate the auth decision to an HTTP endpoint.
-- `ce-auth-plugins/api-key-registry` - validate API keys against a local file.
-- `ce-auth-plugins/unix-user` - authorise by local Unix identity / group.
-- `ce-auth-plugins/htpasswd` - validate against an Apache htpasswd file.
-- `ce-auth-plugins/text-file` - validate username:token against a plaintext file.
-
-
 # API plugins (ce-api-plugins)
 
 Consume the ctrl-exec HTTP API (`/`, `/health`, `/ping`, `/run`, `/status`,
 `/discovery`, `/openapi.json`, `/openapi-live.json`). Discover hosts and scripts
 at runtime; never hardcode them. Required README headings: Purpose,
 Dependencies, Installation, Configuration, Examples, Limitations.
-
-## OpenAPI viewers (single-file browser UIs)
-
-(`rapidoc`, `swagger-ui`, and `redoc` are implemented - see *Already
-implemented*.)
-
-## HTTP collections
-
-(`bruno`, `postman`, and `insomnia` are all implemented - see *Already
-implemented*.)
 
 ## Client libraries and wrappers
 
