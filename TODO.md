@@ -9,8 +9,10 @@ toc: false
 
 Development queue for the plugin ecosystem, migrated from the old WISHLIST.
 Each entry states its purpose, the interface it uses, implementation
-considerations under the current API, and what a completed plugin looks like.
-Grouped by category; within a category, loosely by theme.
+considerations under the current API, and - where helpful - a `Build on:` note
+naming the existing functions, endpoints, or plugins to start from. (Everything
+listed here is unbuilt; shipped plugins are recorded in git history, not in this
+queue.) Grouped by category; within a category, loosely by theme.
 
 Every plugin is a folder under its category with `README.md`, `LICENSE`, and a
 CycloneDX `sbom.json`, ships a `test/` suite (a `run.sh` runner plus a
@@ -47,20 +49,28 @@ perl-client
   `status`, and `discovery`, returning plain Perl data structures, using core
   modules only (`HTTP::Tiny`, `JSON::PP`). Distinct from the existing
   `ctrl-exec-cli` (a command-line tool): this is the importable module for
-  automation and agentic integrations. Could be factored out of the CLI's
-  internals. Done: a script can `use` it and drive a full async run.
+  automation and agentic integrations.
+  Build on: the request/response and async-poll logic already in
+  `ctrl-exec-cli` (`api_get`/`api_post`, `_make_ua`, `_handle_response`, and the
+  `cmd_run --async` -> `cmd_wait` poll of `/status/{reqid}`), lifted out of the
+  CLI and reimplemented over core `HTTP::Tiny`/`JSON::PP`.
 
 cli-wrapper (bash)
 : A bash wrapper over the endpoints using `curl` and `jq` - the same surface as
   the Perl CLI with no Perl dependency, for environments that have only bash,
-  curl, and jq. Cover async (submit + poll). Done: each subcommand maps to an
-  endpoint and returns parsed output.
+  curl, and jq. Cover async (submit + poll).
+  Build on: `ctrl-exec-cli`'s subcommand surface (`health`/`ping`/`discovery`/
+  `run`/`status`/`wait`) mapped one-to-one onto the endpoints, replicating its
+  async flow - `POST /run {"async":true}` then poll `GET /status/{reqid}` - in
+  `curl` + `jq`.
 
 jupyter
 : A Python notebook (using `requests`) demonstrating discovery, a synchronous
   run, async dispatch + poll, and log correlation by reqid. An onboarding and
-  exploration tool for operators comfortable with Python. Done: runs top to
-  bottom against a live API.
+  exploration tool for operators comfortable with Python.
+  Build on: the HTTP API endpoints directly; the `postman`/`insomnia`/`bruno`
+  collections already encode the exact request shapes - including async `reqid`
+  capture - as a reference.
 
 ## Office / data tools
 
