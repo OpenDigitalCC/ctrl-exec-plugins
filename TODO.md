@@ -40,11 +40,15 @@ Two cross-cutting notes under the current API:
 - `ce-api-plugins/swagger-ui` - single-file Swagger UI browser interface.
 - `ce-api-plugins/redoc` - single-file ReDoc reference documentation.
 - `ce-api-plugins/bruno` - git-committable Bruno API collection.
+- `ce-api-plugins/postman` - Postman collection + environment.
+- `ce-api-plugins/insomnia` - Insomnia collection (v4 export).
 - `ce-agent-plugins/linux-audit` - read-only system audit.
 - `ce-agent-plugins/agent-file-transfer` - agent-to-agent transfers.
 - `ce-auth-plugins/rest-query` - delegate the auth decision to an HTTP endpoint.
 - `ce-auth-plugins/api-key-registry` - validate API keys against a local file.
 - `ce-auth-plugins/unix-user` - authorise by local Unix identity / group.
+- `ce-auth-plugins/htpasswd` - validate against an Apache htpasswd file.
+- `ce-auth-plugins/text-file` - validate username:token against a plaintext file.
 
 
 # API plugins (ce-api-plugins)
@@ -61,18 +65,8 @@ implemented*.)
 
 ## HTTP collections
 
-(`bruno` is implemented - see *Already implemented*.)
-
-postman
-: Postman collection importable from `openapi.json`, with an environment
-  template for base URL, token, and username. Covers every endpoint with worked
-  examples and documents async dispatch (`POST /run` `"async": true` -> `202` +
-  reqid -> poll `/status/{reqid}`). Done: import, set the environment, run the
-  ping/discovery/sync-run/async-run examples successfully.
-
-insomnia
-: The same collection for Insomnia, for sites where it is the established HTTP
-  tool. Same endpoint and async coverage.
+(`bruno`, `postman`, and `insomnia` are all implemented - see *Already
+implemented*.)
 
 ## Client libraries and wrappers
 
@@ -231,10 +225,6 @@ biscuit
   action, script, and target hosts. Self-contained and verifiable offline -
   suited to air-gapped deployments. Needs `biscuit-cli` or a Biscuit library.
 
-text-file
-: Validate against a plain `username:token` file. Minimal dependency, for
-  embedded/minimal environments. Document the limits clearly: plaintext tokens,
-  file must be `0600`, rotation by editing the file.
 
 ## Directory and credential validators
 
@@ -248,10 +238,6 @@ pam
   LDAP, smart cards, etc.) through one interface. Needs to run as root or with
   PAM permissions. The most flexible option where PAM is already configured.
 
-htpasswd
-: Validate username/password against an Apache htpasswd file (bcrypt/SHA). No
-  dependencies beyond `openssl`. Document clearly that htpasswd is unsuitable for
-  high-security deployments.
 
 radius
 : Forward credentials to a RADIUS server, for sites with existing RADIUS
