@@ -28,11 +28,17 @@ Every plugin lives in its own subfolder under its category:
     README.md
     LICENSE
     sbom.json
+    test/
+        run.sh
+        TEST-REPORT.md
     <plugin files>
 ```
 
 All three metadata files are required for every plugin in every category.
 A plugin missing any of them will not pass validation.
+
+Every plugin must also ship a `test/` directory with a `run.sh` test runner
+and a committed `TEST-REPORT.md` (see [Tests and test reports](#tests-and-test-reports)).
 
 
 ## Required metadata files
@@ -79,6 +85,57 @@ Minimal `sbom.json` example:
   ]
 }
 ```
+
+
+## Tests and test reports
+
+Every plugin must ship its own tests under a `test/` subdirectory, along with
+a committed test report. This is a submission requirement, not optional.
+
+```
+<category>/<plugin-name>/test/
+    run.sh            # the test runner - self-contained, no network fixtures
+    TEST-REPORT.md    # the committed output of the latest run.sh
+    *.t               # optional: Perl unit tests (run via prove), etc.
+```
+
+`test/run.sh`
+: A self-contained runner invoked as `bash test/run.sh` from the plugin
+  directory. It must exit 0 only when every check passes and non-zero on any
+  failure. It prints a Markdown report to stdout that starts with a
+  `# Test report: <plugin> (<category>)` heading and a `Generated:` timestamp,
+  and ends with a `VERDICT: PASS` or `VERDICT: FAIL` line. Tests must be
+  deterministic: stand up any dependency locally (a temp file, a mock endpoint
+  with a readiness poll - never a fixed `sleep`) and `SKIP` cleanly when an
+  optional tool is absent rather than failing.
+
+`test/TEST-REPORT.md`
+: The captured output of the latest `bash test/run.sh`, committed alongside the
+  runner. Regenerate it whenever the plugin or its tests change:
+
+  ```bash
+  bash test/run.sh | tee test/TEST-REPORT.md
+  ```
+
+The `test/` subdirectory is deliberate: keeping the runner out of the plugin
+root means a `test/run.sh` is never mistaken for an agent `*.sh` script by the
+validator's allowlist detection.
+
+What to test depends on the category:
+
+- **Agent scripts** - the no-args and unknown-subcommand paths exit non-zero
+  (the validator contract), each schema-advertised subcommand is dispatched
+  (cross-check the sidecar enum against the script), and each read-only
+  subcommand runs where its tool is present.
+- **Auth hooks** - the full exit-code matrix (0 authorised / 1 fail-closed /
+  2 bad credentials / 3 insufficient privilege) across empty, valid, wrong,
+  and unknown credentials, using temp registries/files or a local mock
+  endpoint.
+- **API plugins** - run the unit suite (e.g. `prove` for Perl) and/or
+  structurally validate the collection: every endpoint present, environment
+  variables declared, async runs wired to capture the reqid.
+- **Viewer plugins** - structural HTML checks: the document parses, mounts the
+  viewer container, loads its library, and wires the spec URL.
 
 
 ## README required headings
