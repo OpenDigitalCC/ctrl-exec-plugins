@@ -14,8 +14,12 @@ SCRIPTS_DIR="${JOBS_SCRIPTS_DIR:-/etc/run-jobs/scripts}"
 STATE_DIR="${JOBS_STATE_DIR:-/var/lib/run-jobs/state}"
 SYSLOG_TAG="run-jobs"
 
+# Syslog when a socket is there; otherwise stderr, which the entrypoint hands
+# to the container log. A logging failure must never stop a tick.
 log() {
-    logger -t "$SYSLOG_TAG" -p local0.info "$1"
+    logger -t "$SYSLOG_TAG" -p local0.info "$1" 2>/dev/null \
+        || printf '%s: %s\n' "$SYSLOG_TAG" "$1" >&2 \
+        || true
 }
 
 # Parse a cron expression and return 0 if it matches the given timestamp
@@ -172,7 +176,9 @@ main() {
 
     done
 
-    [[ $ran -eq 0 ]] && log "tick: nothing due"
+    if (( ran == 0 )); then
+        log "tick: nothing due"
+    fi
 }
 
 main

@@ -12,8 +12,14 @@ echo "[run-jobs] Scripts dir: ${JOBS_SCRIPTS_DIR:-/etc/run-jobs/scripts}"
 echo "[run-jobs] State dir:   ${JOBS_STATE_DIR:-/var/lib/run-jobs/state}"
 
 while true; do
+    # A failed tick is reported and the loop carries on; job results are in
+    # the state dir, and the next tick must still happen.
+    rc=0
     /usr/local/bin/run-jobs.sh &
-    wait $!
+    wait $! || rc=$?
+    if (( rc != 0 )); then
+        echo "[run-jobs] tick failed (exit $rc)"
+    fi
 
     # Sleep until next 5-minute boundary
     now=$(date +%s)

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Test suite for ctrl-exec-cli. Run: bash test/run.sh
-# Runs the Perl unit tests under test/ with prove.
+# Runs the Perl unit tests under test/ with prove, then the run-jobs
+# tests with bats.
 set -u
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -11,5 +12,15 @@ echo
 out="$(cd "$DIR" && prove test/ 2>&1)"; rc=$?
 echo "$out"
 echo
+
+if command -v bats > /dev/null 2>&1; then
+    out="$(cd "$DIR" && bats test/run-jobs.bats 2>&1)" || rc=1
+    echo "$out"
+else
+    echo "run-jobs: NOT RUN - bats is not installed"
+    rc=1
+fi
+echo
+
 [ "$rc" -eq 0 ] && echo "VERDICT: PASS" || echo "VERDICT: FAIL"
 exit "$rc"
