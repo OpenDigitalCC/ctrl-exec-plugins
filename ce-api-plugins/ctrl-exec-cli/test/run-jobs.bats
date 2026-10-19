@@ -173,3 +173,90 @@ add_job() {
     grep -q '^exit_code=0$' "$W/state/certs.state"
     run ! grep -q problem "$LOG"
 }
+
+# --- the tick window --------------------------------------------------------
+
+# add_counting_job NAME CONF-LINE... : job that appends a line to $W/NAME.count
+add_counting_job() {
+    local name=$1
+    shift
+    printf '#!/bin/bash\necho x >> "%s"\n' "$W/$name.count" > "$W/scripts/$name.sh"
+    chmod 755 "$W/scripts/$name.sh"
+    printf '%s\n' "$@" > "$W/scripts/$name.conf"
+}
+
+# tick "YYYY-MM-DD HH:MM" - run one tick at that time (UTC)
+tick() {
+    RUN_JOBS_NOW=$(at "$1") bash "$RUN_JOBS"
+}
+
+# runs NAME - how many times the counting job has run
+runs() {
+    if [[ -e "$W/$1.count" ]]; then
+        wc -l < "$W/$1.count"
+    else
+        echo 0
+    fi
+}
+
+@test "a minute between 5-minute ticks runs at the next tick" {
+    add_counting_job odd 'schedule = 7 * * * *'
+    tick '2026-10-19 10:05'
+    [ "$(runs odd)" -eq 0 ]
+    tick '2026-10-19 10:10'
+    [ "$(runs odd)" -eq 1 ]
+}
+
+@test "a job runs once, not again at a repeated or early tick" {
+    add_counting_job daily 'schedule = 0 2 * * *'
+    tick '2026-10-19 02:00'
+    tick '2026-10-19 02:00'
+    tick '2026-10-19 02:02'
+    tick '2026-10-19 02:05'
+    [ "$(runs daily)" -eq 1 ]
+}
+
+@test "a minute that passed during an overrunning tick is caught up" {
+    add_counting_job mid 'schedule = 10 2 * * *'
+    tick '2026-10-19 02:00'
+    tick '2026-10-19 02:15'
+    [ "$(runs mid)" -eq 1 ]
+}
+
+@test "after more than an hour without a tick, missed minutes are not run" {
+    add_counting_job missed 'schedule = 30 2 * * *'
+    tick '2026-10-19 01:00'
+    tick '2026-10-19 03:00'
+    [ "$(runs missed)" -eq 0 ]
+}
+
+@test "a schedule that matches several minutes of one tick runs once" {
+    add_counting_job every 'schedule = * * * * *'
+    tick '2026-10-19 02:00'
+    tick '2026-10-19 02:05'
+    [ "$(runs every)" -eq 2 ]
+}
+
+@test "runat runs at the first tick at or after it, never before" {
+    add_counting_job once 'runat = 2026-10-19 22:03'
+    tick '2026-10-19 21:55'
+    tick '2026-10-19 22:00'
+    [ "$(runs once)" -eq 0 ]
+    tick '2026-10-19 22:05'
+    [ "$(runs once)" -eq 1 ]
+    grep -q '^trigger=runat=2026-10-19 22:03$' "$W/state/once.state"
+    tick '2026-10-19 22:10'
+    [ "$(runs once)" -eq 1 ]
+}
+
+@test "runat on a tick boundary runs at that tick" {
+    add_counting_job exact 'runat = 2026-10-19 22:00'
+    tick '2026-10-19 22:00'
+    [ "$(runs exact)" -eq 1 ]
+}
+
+@test "a runat that is not a date is logged" {
+    add_counting_job typo 'runat = 2026-13-45 22:00'
+    tick '2026-10-19 22:00'
+    grep -q "problem: typo - runat '2026-13-45 22:00' is not a date" "$LOG"
+}

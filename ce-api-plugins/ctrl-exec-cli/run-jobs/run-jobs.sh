@@ -8,12 +8,17 @@
 # Multiple runat= lines are supported. schedule= and runat= may coexist.
 # A runat= that has passed will never trigger again - leave the file in place.
 # Other keys are left for the job itself to read.
+#
+# Each tick covers every minute since the previous tick, so a job runs at the
+# first tick at or after its scheduled minute, and at most once per tick.
 
 set -euo pipefail
 
 SCRIPTS_DIR="${JOBS_SCRIPTS_DIR:-/etc/run-jobs/scripts}"
 STATE_DIR="${JOBS_STATE_DIR:-/var/lib/run-jobs/state}"
 SYSLOG_TAG="run-jobs"
+TICK_SECONDS=300
+CATCHUP_SECONDS=3600
 
 # Syslog when a socket is there; otherwise stderr, which the entrypoint hands
 # to the container log. A logging failure must never stop a tick.
@@ -178,19 +183,92 @@ read_conf() {
     done < "$1"
 }
 
-# Return 0 if a runat= datetime falls within the current 5-minute window
-runat_matches() {
-    local runat="$1"
-    local now_minute="$2"
+# tick_window NOW_MINUTE
+# Set WIN_LO..WIN_HI (epoch seconds, whole minutes, inclusive) to the minutes
+# this tick covers: everything since the previous tick recorded in
+# STATE_DIR/.last-tick, so a minute between 5-minute boundaries, or one that
+# passed while a long tick ran, is still covered. With no previous tick, or
+# one older than CATCHUP_SECONDS, the window is the last TICK_SECONDS. A tick
+# in the same minute as the previous one covers nothing.
+tick_window() {
+    local now_minute=$1
+    local last=""
 
-    local runat_epoch
-    runat_epoch=$(date -d "$runat" +%s 2>/dev/null) || return 1
+    if [[ -r $STATE_DIR/.last-tick ]]; then
+        read -r last < "$STATE_DIR/.last-tick" || true
+    fi
+    WIN_HI=$now_minute
+    if [[ ! $last =~ ^[0-9]+$ ]] || (( now_minute - last > CATCHUP_SECONDS )); then
+        WIN_LO=$(( now_minute - TICK_SECONDS + 60 ))
+    else
+        WIN_LO=$(( last + 60 ))
+    fi
+}
 
-    # Matches if runat falls within [now_minute, now_minute+300)
-    if (( runat_epoch >= now_minute && runat_epoch < now_minute + 300 )); then
+# window_fields
+# Fill WIN_M, WIN_H, WIN_DOM, WIN_MON and WIN_DOW with the date fields of each
+# minute WIN_LO..WIN_HI, from a single date call.
+window_fields() {
+    local t m h dom mon dow
+
+    WIN_M=()
+    WIN_H=()
+    WIN_DOM=()
+    WIN_MON=()
+    WIN_DOW=()
+    if (( WIN_LO > WIN_HI )); then
         return 0
     fi
-    return 1
+    while read -r m h dom mon dow; do
+        WIN_M+=("$m")
+        WIN_H+=("$h")
+        WIN_DOM+=("$dom")
+        WIN_MON+=("$mon")
+        WIN_DOW+=("$dow")
+    done < <(
+        for (( t = WIN_LO; t <= WIN_HI; t += 60 )); do
+            echo "@$t"
+        done | date -f - '+%-M %-H %-d %-m %w'
+    )
+}
+
+# job_due CONF
+# Return 0 if the job is due in WIN_LO..WIN_HI, with JOB_TRIGGER set to
+# "schedule" or "runat=<value>"; a schedule match wins over runat=. Problems
+# in the .conf are collected in JOB_PROBLEMS whether or not the job is due.
+# Needs window_fields to have run.
+job_due() {
+    local i runat runat_epoch
+
+    JOB_TRIGGER=""
+    read_conf "$1"
+    JOB_PROBLEMS=("${CONF_PROBLEMS[@]}")
+
+    if [[ -n $CONF_SCHEDULE ]]; then
+        if ! cron_parse "$CONF_SCHEDULE"; then
+            JOB_PROBLEMS+=("schedule '$CONF_SCHEDULE': $CRON_ERROR")
+        else
+            for i in "${!WIN_M[@]}"; do
+                if cron_match "${WIN_M[i]}" "${WIN_H[i]}" "${WIN_DOM[i]}" "${WIN_MON[i]}" "${WIN_DOW[i]}"; then
+                    JOB_TRIGGER="schedule"
+                    break
+                fi
+            done
+        fi
+    fi
+
+    for runat in "${CONF_RUNAT[@]}"; do
+        if ! runat_epoch=$(date -d "$runat" +%s 2>/dev/null); then
+            JOB_PROBLEMS+=("runat '$runat' is not a date")
+            continue
+        fi
+        runat_epoch=$(( runat_epoch - runat_epoch % 60 ))
+        if [[ -z $JOB_TRIGGER ]] && (( runat_epoch >= WIN_LO && runat_epoch <= WIN_HI )); then
+            JOB_TRIGGER="runat=$runat"
+        fi
+    done
+
+    [[ -n $JOB_TRIGGER ]]
 }
 
 run_script() {
@@ -233,55 +311,35 @@ main() {
         exit 1
     fi
 
-    # Round current time down to the nearest minute for cron matching.
-    # RUN_JOBS_NOW (epoch seconds) fixes the clock for the test suite.
+    # RUN_JOBS_NOW (epoch seconds) fixes the clock for the test suite
     local now
     now=${RUN_JOBS_NOW:-$(date +%s)}
-    local now_minute=$(( now - (now % 60) ))
-    local -a now_fields
-    read -r -a now_fields <<< "$(date -d "@$now_minute" '+%-M %-H %-d %-m %w')"
+    tick_window $(( now - now % 60 ))
+    window_fields
+    # Recorded before any job runs: a tick killed part way through does not
+    # repeat on restart the jobs it already started
+    echo "$WIN_HI" > "$STATE_DIR/.last-tick"
 
     local ran=0
+    local conf script name problem
 
     for conf in "$SCRIPTS_DIR"/*.conf; do
         [[ -e "$conf" ]] || continue
 
-        local script="${conf%.conf}.sh"
+        script="${conf%.conf}.sh"
+        name=$(basename "$script" .sh)
         if [[ ! -x "$script" ]]; then
-            log "skipping: $(basename "$script" .sh) (not executable or missing)"
+            log "skipping: $name (not executable or missing)"
             continue
         fi
 
-        local name
-        name=$(basename "$script" .sh)
-
-        read_conf "$conf"
-        local problem
-        for problem in "${CONF_PROBLEMS[@]}"; do
+        if job_due "$conf"; then
+            run_script "$script" "$JOB_TRIGGER"
+            (( ran++ )) || true
+        fi
+        for problem in "${JOB_PROBLEMS[@]}"; do
             log "problem: $name - $problem"
         done
-
-        # Check schedule
-        if [[ -n "$CONF_SCHEDULE" ]]; then
-            if ! cron_parse "$CONF_SCHEDULE"; then
-                log "problem: $name - schedule '$CONF_SCHEDULE': $CRON_ERROR"
-            elif cron_match "${now_fields[@]}"; then
-                run_script "$script" "schedule"
-                (( ran++ )) || true
-                continue   # already ran this tick - skip runat checks
-            fi
-        fi
-
-        # Check each runat
-        local runat
-        for runat in "${CONF_RUNAT[@]}"; do
-            if runat_matches "$runat" "$now_minute"; then
-                run_script "$script" "runat=$runat"
-                (( ran++ )) || true
-                break   # one execution per tick regardless of multiple runat matches
-            fi
-        done
-
     done
 
     if (( ran == 0 )); then
