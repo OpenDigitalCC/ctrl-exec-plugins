@@ -260,3 +260,104 @@ runs() {
     tick '2026-10-19 22:00'
     grep -q "problem: typo - runat '2026-13-45 22:00' is not a date" "$LOG"
 }
+
+# --- --explain ---------------------------------------------------------------
+
+# explain ARGS... - run --explain on the test scripts dir
+explain() {
+    bash "$RUN_JOBS" --explain --dir "$W/scripts" "$@"
+}
+
+@test "explain names the jobs a real tick at the same time runs, and runs none" {
+    add_counting_job daily 'schedule = 0 2 * * *'
+    add_counting_job odd 'schedule = 58 1 * * *'
+    add_counting_job weekend 'schedule = 0 2 * * 6,0'
+    add_counting_job once 'runat = 2026-10-19 01:57'
+    add_counting_job later 'runat = 2026-10-19 02:01'
+
+    run explain --at '2026-10-19 02:00'
+    [ "$status" -eq 0 ]
+    for job in daily odd weekend once later; do
+        [ "$(runs "$job")" -eq 0 ]
+    done
+    [ ! -e "$W/state/.last-tick" ]
+    # Job blocks start with the unindented name, after the blank line that
+    # ends the header
+    explained=$(echo "$output" \
+        | awk '/^$/ { body = 1 } body && /^[^ ]/ { job = $0 } /^  this tick  RUNS/ { print job }' \
+        | sort | tr '\n' ' ')
+
+    tick '2026-10-19 02:00'
+    ran=$(for job in daily odd weekend once later; do
+        if [ "$(runs "$job")" -gt 0 ]; then echo "$job"; fi
+    done | sort | tr '\n' ' ')
+
+    [ "$explained" = "daily odd once " ]
+    [ "$ran" = "$explained" ]
+}
+
+@test "explain shows the next ticks, and the minute an off-grid one is for" {
+    add_job report 'schedule = 7 9 * * 1-5'
+    run explain --at '2026-10-23 10:00'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"next       2026-10-26 09:10 (for 09:07)"* ]]
+    [[ "$output" == *"           2026-10-27 09:10 (for 09:07)"* ]]
+}
+
+@test "explain shows where each runat stands" {
+    add_job once 'runat = 2026-04-02 22:00' 'runat = 2026-10-19 21:59' 'runat = 2026-10-21 22:03'
+    run explain --at '2026-10-19 22:00'
+    [[ "$output" == *"runat      2026-04-02 22:00 - past, ignored"* ]]
+    [[ "$output" == *"runat      2026-10-19 21:59 - in this tick"* ]]
+    [[ "$output" == *"runat      2026-10-21 22:03 - runs at tick 2026-10-21 22:05"* ]]
+    [[ "$output" == *"this tick  RUNS (trigger=runat=2026-10-19 21:59)"* ]]
+}
+
+@test "explain reports problems and exits 1" {
+    add_job typo 'schedule = 0 2 * * mon'
+    add_job never 'schedule = 0 0 30 2 *'
+    add_job blank 'agent = hestia-01'
+    add_job noexec 'schedule = 0 2 * * *'
+    chmod 644 "$W/scripts/noexec.sh"
+    add_job orphan
+    rm "$W/scripts/orphan.conf"
+    run explain --at '2026-10-19 02:00'
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"PROBLEM    schedule '0 2 * * mon': day-of-week: bad value 'mon'"* ]]
+    [[ "$output" == *"PROBLEM    schedule '0 0 30 2 *' never matches within a year"* ]]
+    [[ "$output" == *"PROBLEM    no schedule= or runat=, so it never runs"* ]]
+    [[ "$output" == *"due (trigger=schedule) but skipped"* ]]
+    [[ "$output" == *"PROBLEM    noexec.sh is not executable (chmod 755); every tick skips it"* ]]
+    [[ "$output" == *"PROBLEM    no orphan.conf, so orphan.sh never runs"* ]]
+    [[ "$output" == *"5 job(s): 0 would run in this tick, 5 problem(s)"* ]]
+}
+
+@test "explain of a named job shows only that job" {
+    add_job a 'schedule = 0 2 * * *'
+    add_job b 'schedule = 0 3 * * *'
+    run explain --at '2026-10-19 02:00' b.sh
+    [ "$status" -eq 0 ]
+    [[ "$output" == *$'\nb\n'* ]]
+    [[ "$output" != *$'\na\n'* ]]
+    run explain --at '2026-10-19 02:00' nosuch
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"PROBLEM    no such job in $W/scripts"* ]]
+}
+
+@test "explain skips a local time lost to daylight saving, as ticks do" {
+    add_job night 'schedule = 30 1 * * *'
+    TZ=Europe/London run explain --at '2027-03-27 02:00'
+    [[ "$output" == *"next       2027-03-29 01:30"* ]]
+}
+
+@test "explain and the runner reject bad arguments with status 2" {
+    run explain --at 'not a time'
+    [ "$status" -eq 2 ]
+    run explain --bogus
+    [ "$status" -eq 2 ]
+    run bash "$RUN_JOBS" --bogus
+    [ "$status" -eq 2 ]
+    run bash "$RUN_JOBS" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--explain"* ]]
+}

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # run-jobs.sh - Job runner, called every 5 minutes by run-jobs-entrypoint.sh
 #
+# Usage:
+#   run-jobs.sh                  run one tick: execute every job that is due
+#   run-jobs.sh --explain [--at TIME] [--dir DIR] [JOB...]
+#                                report what a tick would run and when each job
+#                                runs next; executes nothing, writes nothing
+#
 # .conf keys:
 #   schedule = <cron expression>   recurring schedule (5-field cron)
 #   runat    = <ISO datetime>      one-off execution (YYYY-MM-DD HH:MM)
@@ -129,19 +135,18 @@ cron_parse() {
     fi
 }
 
-# cron_match MINUTE HOUR DOM MONTH DOW - against the last cron_parse.
-# DOW is 0-6 with 0 = Sunday, as date +%w gives it.
-cron_match() {
+# cron_day_match DOM MONTH DOW - the date part of cron_match
+cron_day_match() {
     local dom_ok=0
     local dow_ok=0
 
-    if [[ $CRON_MIN != *" $1 "* || $CRON_HOUR != *" $2 "* || $CRON_MON != *" $4 "* ]]; then
+    if [[ $CRON_MON != *" $2 "* ]]; then
         return 1
     fi
-    if [[ $CRON_DOM == *" $3 "* ]]; then
+    if [[ $CRON_DOM == *" $1 "* ]]; then
         dom_ok=1
     fi
-    if [[ $CRON_DOW == *" $5 "* ]]; then
+    if [[ $CRON_DOW == *" $3 "* ]]; then
         dow_ok=1
     fi
     if (( CRON_DAY_OR )); then
@@ -149,6 +154,15 @@ cron_match() {
     else
         (( dom_ok && dow_ok ))
     fi
+}
+
+# cron_match MINUTE HOUR DOM MONTH DOW - against the last cron_parse.
+# DOW is 0-6 with 0 = Sunday, as date +%w gives it.
+cron_match() {
+    if [[ $CRON_MIN != *" $1 "* || $CRON_HOUR != *" $2 "* ]]; then
+        return 1
+    fi
+    cron_day_match "$3" "$4" "$5"
 }
 
 # read_conf FILE
@@ -271,6 +285,256 @@ job_due() {
     [[ -n $JOB_TRIGGER ]]
 }
 
+# --- explain ------------------------------------------------------------------
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  run-jobs.sh                  run one tick: execute every job that is due
+  run-jobs.sh --explain [--at TIME] [--dir DIR] [JOB...]
+
+--explain reports, for each job (or only the JOBs named), its schedule and
+runat= entries, whether a tick at TIME would run it, and the next ticks that
+will. Nothing is executed and nothing is written. Exit status is 0 when no
+problems were found, 1 when some were, 2 on a usage error.
+
+  --at TIME   the tick to explain, any date(1) time ("2026-10-20 02:00",
+              "tomorrow 02:00"); default the next tick
+  --dir DIR   scripts dir; default $JOBS_SCRIPTS_DIR or /etc/run-jobs/scripts
+USAGE
+}
+
+# fmt_time EPOCH - local "YYYY-MM-DD HH:MM"
+fmt_time() {
+    date -d "@$1" '+%Y-%m-%d %H:%M'
+}
+
+# tick_for EPOCH - the tick that covers a minute: the first 5-minute boundary
+# at or after it, as the entrypoint aligns ticks
+tick_for() {
+    echo $(( ($1 + TICK_SECONDS - 1) / TICK_SECONDS * TICK_SECONDS ))
+}
+
+# cron_next AFTER COUNT
+# Print up to COUNT lines "TICK MINUTE" (epoch seconds): the next ticks after
+# AFTER at which the last cron_parse runs, each with the scheduled minute it
+# runs for. Searches a year ahead; a local time that does not exist (a
+# daylight-saving gap) is skipped, as a tick never covers it.
+cron_next() {
+    local after=$1
+    local count=$2
+    local after_day after_h after_m noon d
+    local day dom mon dow h m epoch tick
+    local last_tick=0
+    local found=0
+
+    read -r after_day after_h after_m <<< "$(date -d "@$after" '+%F %-H %-M')"
+    noon=$(date -d "$after_day 12:00" +%s)
+    while read -r day dom mon dow; do
+        if ! cron_day_match "$dom" "$mon" "$dow"; then
+            continue
+        fi
+        for h in $CRON_HOUR; do
+            for m in $CRON_MIN; do
+                if [[ $day == "$after_day" ]] && (( h * 60 + m <= after_h * 60 + after_m )); then
+                    continue
+                fi
+                if ! epoch=$(date -d "$day $h:$m" +%s 2>/dev/null); then
+                    continue
+                fi
+                tick=$(tick_for "$epoch")
+                if (( tick == last_tick )); then
+                    continue
+                fi
+                echo "$tick $epoch"
+                last_tick=$tick
+                (( ++found ))
+                if (( found >= count )); then
+                    return 0
+                fi
+            done
+        done
+    done < <(
+        for (( d = 0; d <= 366; d++ )); do
+            echo "@$(( noon + d * 86400 ))"
+        done | date -f - '+%F %-d %-m %w'
+    )
+}
+
+# explain_job DIR NAME
+# Print one job's block; add its problems to EXPLAIN_PROBLEMS and count it in
+# EXPLAIN_RUNS when the tick would run it.
+explain_job() {
+    local dir=$1
+    local name=$2
+    local conf="$dir/$name.conf"
+    local script="$dir/$name.sh"
+    local skip=""
+    local runat runat_epoch tick minute note problem
+    local -a next=()
+
+    echo "$name"
+    if [[ ! -e $conf ]]; then
+        if [[ ! -e $script ]]; then
+            printf '  %-10s %s\n' PROBLEM "no such job in $dir"
+        else
+            printf '  %-10s %s\n' PROBLEM "no $name.conf, so $name.sh never runs"
+        fi
+        (( ++EXPLAIN_PROBLEMS ))
+        echo
+        return 0
+    fi
+    if [[ ! -e $script ]]; then
+        skip="$name.sh is missing"
+    elif [[ ! -x $script ]]; then
+        skip="$name.sh is not executable (chmod 755)"
+    fi
+
+    local due=0
+    if job_due "$conf"; then
+        due=1
+    fi
+
+    printf '  %-10s %s\n' schedule "${CONF_SCHEDULE:-none}"
+    for runat in "${CONF_RUNAT[@]}"; do
+        if ! runat_epoch=$(date -d "$runat" +%s 2>/dev/null); then
+            note="not a date"
+        else
+            runat_epoch=$(( runat_epoch - runat_epoch % 60 ))
+            if (( runat_epoch < WIN_LO )); then
+                note="past, ignored"
+            elif (( runat_epoch <= WIN_HI )); then
+                note="in this tick"
+            else
+                note="runs at tick $(fmt_time "$(tick_for "$runat_epoch")")"
+            fi
+        fi
+        printf '  %-10s %s - %s\n' runat "$runat" "$note"
+    done
+
+    if (( due )) && [[ -z $skip ]]; then
+        printf '  %-10s %s\n' 'this tick' "RUNS (trigger=$JOB_TRIGGER)"
+        (( ++EXPLAIN_RUNS ))
+    elif (( due )); then
+        printf '  %-10s %s\n' 'this tick' "due (trigger=$JOB_TRIGGER) but skipped"
+    else
+        printf '  %-10s %s\n' 'this tick' '-'
+    fi
+
+    if [[ -n $CONF_SCHEDULE ]] && cron_parse "$CONF_SCHEDULE"; then
+        while read -r tick minute; do
+            note=$(fmt_time "$tick")
+            if (( tick != minute )); then
+                note+=" (for $(date -d "@$minute" '+%H:%M'))"
+            fi
+            next+=("$note")
+        done < <(cron_next "$WIN_HI" 3)
+        if (( ${#next[@]} == 0 )); then
+            printf '  %-10s %s\n' next 'never (no match within a year)'
+            JOB_PROBLEMS+=("schedule '$CONF_SCHEDULE' never matches within a year")
+        else
+            printf '  %-10s %s\n' next "${next[0]}"
+            for note in "${next[@]:1}"; do
+                printf '  %-10s %s\n' '' "$note"
+            done
+        fi
+    fi
+
+    if [[ -n $skip ]]; then
+        JOB_PROBLEMS+=("$skip; every tick skips it")
+    fi
+    if [[ -z $CONF_SCHEDULE && ${#CONF_RUNAT[@]} -eq 0 ]]; then
+        JOB_PROBLEMS+=("no schedule= or runat=, so it never runs")
+    fi
+    for problem in "${JOB_PROBLEMS[@]}"; do
+        printf '  %-10s %s\n' PROBLEM "$problem"
+        (( ++EXPLAIN_PROBLEMS ))
+    done
+    echo
+}
+
+# explain [--at TIME] [--dir DIR] [JOB...]
+explain() {
+    local at=""
+    local dir=$SCRIPTS_DIR
+    local -a names=()
+    local now f name
+
+    while (( $# )); do
+        case $1 in
+            --at)
+                at=${2:-}
+                shift 2 || { usage >&2; return 2; }
+                ;;
+            --dir)
+                dir=${2:-}
+                shift 2 || { usage >&2; return 2; }
+                ;;
+            -h|--help)
+                usage
+                return 0
+                ;;
+            -*)
+                echo "run-jobs: unknown option '$1'" >&2
+                usage >&2
+                return 2
+                ;;
+            *)
+                name=${1%.sh}
+                names+=("${name%.conf}")
+                shift
+                ;;
+        esac
+    done
+
+    if [[ ! -d $dir ]]; then
+        echo "run-jobs: scripts dir not found: $dir" >&2
+        return 2
+    fi
+    if [[ -n $at ]]; then
+        if ! now=$(date -d "$at" +%s 2>/dev/null); then
+            echo "run-jobs: --at '$at' is not a time date(1) understands" >&2
+            return 2
+        fi
+    else
+        now=$(tick_for "$(date +%s)")
+    fi
+    WIN_HI=$(( now - now % 60 ))
+    WIN_LO=$(( WIN_HI - TICK_SECONDS + 60 ))
+    window_fields
+
+    if (( ${#names[@]} == 0 )); then
+        for f in "$dir"/*.conf "$dir"/*.sh; do
+            if [[ -e $f ]]; then
+                name=${f##*/}
+                names+=("${name%.*}")
+            fi
+        done
+        if (( ${#names[@]} )); then
+            mapfile -t names < <(printf '%s\n' "${names[@]}" | sort -u)
+        fi
+    fi
+
+    echo "run-jobs explain - nothing is executed"
+    echo "tick       $(fmt_time "$WIN_HI") $(date -d "@$WIN_HI" +%Z), covering $(date -d "@$WIN_LO" +%H:%M)-$(date -d "@$WIN_HI" +%H:%M)"
+    if (( WIN_HI % TICK_SECONDS )); then
+        echo "           (real ticks fall on 5-minute boundaries)"
+    fi
+    echo "scripts    $dir"
+    echo
+
+    EXPLAIN_PROBLEMS=0
+    EXPLAIN_RUNS=0
+    for name in "${names[@]}"; do
+        explain_job "$dir" "$name"
+    done
+
+    echo "${#names[@]} job(s): $EXPLAIN_RUNS would run in this tick, $EXPLAIN_PROBLEMS problem(s)"
+    if (( EXPLAIN_PROBLEMS )); then
+        return 1
+    fi
+}
+
 run_script() {
     local script="$1"
     local trigger="$2"   # 'schedule' or runat datetime
@@ -349,5 +613,23 @@ main() {
 
 # Sourcing the file (as the test suite does) defines the functions only
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
-    main "$@"
+    case ${1:-} in
+        --explain)
+            shift
+            rc=0
+            explain "$@" || rc=$?
+            exit "$rc"
+            ;;
+        -h|--help)
+            usage
+            ;;
+        "")
+            main
+            ;;
+        *)
+            echo "run-jobs: unknown argument '$1'" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
 fi
