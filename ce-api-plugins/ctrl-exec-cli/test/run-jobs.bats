@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 # Tests for run-jobs/run-jobs.sh. Run: bats test/run-jobs.bats
 #
-# Each test gets its own scripts and state dirs and a stub logger on PATH
-# that appends to $LOG, or fails as logger does when /dev/log is missing.
+# Each test gets its own scripts and state dirs, a stand-in syslog socket,
+# and a stub logger on PATH that appends its arguments to $LOG (or fails,
+# with STUB_LOGGER_FAIL set).
 
 bats_require_minimum_version 1.5.0
 
@@ -25,6 +26,8 @@ STUB
     export STUB_LOG="$LOG"
     export JOBS_SCRIPTS_DIR="$W/scripts"
     export JOBS_STATE_DIR="$W/state"
+    export RUN_JOBS_SYSLOG_SOCKET="$W/syslog.sock"
+    touch "$RUN_JOBS_SYSLOG_SOCKET"
     export TZ=UTC
 }
 
@@ -81,7 +84,25 @@ add_job() {
     grep -q 'finished: broken exit=3' "$LOG"
 }
 
-@test "jobs still run when there is no syslog socket" {
+@test "logging goes to the named syslog socket" {
+    add_job every 'schedule = * * * * *'
+    run bash "$RUN_JOBS"
+    grep -q -- "-u $W/syslog.sock -t run-jobs -p local0.info starting: every" "$LOG"
+    [[ "$output" != *"run-jobs: starting"* ]]
+}
+
+@test "with no syslog socket, log lines go to stderr" {
+    # util-linux logger exits 0 here even though the line is lost, which
+    # the stub models by succeeding
+    add_job every 'schedule = * * * * *'
+    RUN_JOBS_SYSLOG_SOCKET="$W/no-such-socket" run bash "$RUN_JOBS"
+    [ "$status" -eq 0 ]
+    grep -q '^exit_code=0$' "$W/state/every.state"
+    [[ "$output" == *"run-jobs: starting: every trigger=schedule"* ]]
+    [ ! -e "$LOG" ]
+}
+
+@test "jobs still run when logger fails" {
     add_job every 'schedule = * * * * *'
     STUB_LOGGER_FAIL=1 run bash "$RUN_JOBS"
     [ "$status" -eq 0 ]

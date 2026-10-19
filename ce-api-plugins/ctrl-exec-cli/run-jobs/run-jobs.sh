@@ -23,15 +23,21 @@ set -euo pipefail
 SCRIPTS_DIR="${JOBS_SCRIPTS_DIR:-/etc/run-jobs/scripts}"
 STATE_DIR="${JOBS_STATE_DIR:-/var/lib/run-jobs/state}"
 SYSLOG_TAG="run-jobs"
+# RUN_JOBS_SYSLOG_SOCKET points the test suite at a stand-in socket
+SYSLOG_SOCKET="${RUN_JOBS_SYSLOG_SOCKET:-/dev/log}"
 TICK_SECONDS=300
 CATCHUP_SECONDS=3600
 
-# Syslog when a socket is there; otherwise stderr, which the entrypoint hands
-# to the container log. A logging failure must never stop a tick.
+# Syslog when the socket is there; otherwise stderr, which the entrypoint hands
+# to the container log. The socket is named explicitly: without -u, util-linux
+# logger falls back to UDP when /dev/log is missing, exits 0, and the line is
+# lost. A logging failure must never stop a tick.
 log() {
-    logger -t "$SYSLOG_TAG" -p local0.info "$1" 2>/dev/null \
-        || printf '%s: %s\n' "$SYSLOG_TAG" "$1" >&2 \
-        || true
+    if [[ -e $SYSLOG_SOCKET ]] \
+        && logger -u "$SYSLOG_SOCKET" -t "$SYSLOG_TAG" -p local0.info "$1" 2>/dev/null; then
+        return 0
+    fi
+    printf '%s: %s\n' "$SYSLOG_TAG" "$1" >&2 || true
 }
 
 # cron_field FIELD MIN MAX
