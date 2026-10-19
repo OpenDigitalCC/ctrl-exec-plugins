@@ -1,66 +1,83 @@
-services:
-  dispatcher:
-    build:
-      context: .
-      dockerfile: Dockerfile.dispatcher
-    container_name: dispatcher
-    restart: unless-stopped
-    environment:
-      API_BIND: 0.0.0.0        # reachable from run-jobs on the same network
-      API_PORT: 7445
-      API_AUTH_DEFAULT: deny   # set to allow for isolated/dev environments
-    ports:
-      - "7444:7444"            # pairing - expose only when actively pairing
-      - "7445:7445"            # API
-    volumes:
-      - dispatcher-data:/etc/ctrl-exec
-      - dispatcher-registry:/var/lib/ctrl-exec
-      # - ./auth-hook:/etc/ctrl-exec/auth-hook:ro
-    networks:
-      - ctrl-exec-net
+# Example: a ctrl-exec dispatcher and run-jobs on one Docker host.
+#
+#   dispatcher  - the ctrl-exec API. Runs nothing itself; run-jobs calls it.
+#   run-jobs    - the scheduler. Owns the job scripts and their state, and
+#                 calls the dispatcher over the internal network.
+#
+# Adapt before use: the image tag, the dispatcher id, which ports are
+# published and to which address, and the resource limits. Persistent data is
+# in bind mounts under this directory.
+#
+# The dispatcher image is built from the ctrl-exec packages, not here. run-jobs
+# is built here once the CLI is copied into the build context:
+#   cp ../ctrl-exec-cli .
+#   CE_VERSION=<dispatcher image tag> docker compose up -d --build
 
-  agent:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
-    container_name: agent
-    restart: on-failure
-    hostname: agent
+# Hardening shared by both services: read-only root, no capabilities, no
+# privilege gain, bounded processes and files.
+x-hardened: &hardened
+  restart: unless-stopped
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 200
+  ulimits:
+    nofile: { soft: 1024, hard: 4096 }
+    nproc: 200
+
+services:
+
+  dispatcher:
+    <<: *hardened
+    image: ctrl-exec-dispatcher:${CE_VERSION:?set CE_VERSION to the dispatcher image tag}
+    hostname: dispatcher
+    # Only what an entrypoint needs to fix mount ownership and drop to an
+    # unprivileged user; drop this if the image starts unprivileged.
+    cap_add: [CHOWN, FOWNER, DAC_OVERRIDE, SETUID, SETGID]
     environment:
-      DISPATCHER_HOST: dispatcher
+      DISPATCHER_ID: example-dispatcher   # changing it after pairing invalidates all pairings
+      API_BIND: 0.0.0.0                   # inside the container; the port mapping limits exposure
+      API_PORT: 7445
+      API_AUTH_DEFAULT: deny
     ports:
-      - "7443:7443"
+      # The API is plain HTTP: publish it only on a trusted address. run-jobs
+      # reaches it over ctrl-exec-net and needs no published port.
+      - "127.0.0.1:7445:7445"
+      # - "7444:7444"                     # pairing - enable only while pairing
     volumes:
-      - agent-data:/etc/ctrl-exec-agent
-      - ce-agent-plugins:/opt/ctrl-exec-scripts
-    networks:
-      - ctrl-exec-net
+      - ./dispatcher/data:/etc/ctrl-exec            # config, CA, certs, auth hook
+      - ./dispatcher/registry:/var/lib/ctrl-exec    # paired-agent registry, runs, locks
+      - /dev/log:/dev/log                           # optional: log to the host's syslog
+    tmpfs: [/tmp, /run]
+    cpus: "1.0"
+    mem_limit: 128m
+    memswap_limit: 128m
+    networks: [ctrl-exec-net]
 
   run-jobs:
+    <<: *hardened
     build:
       context: .
       dockerfile: Dockerfile.run-jobs
-    container_name: run-jobs
-    restart: unless-stopped
+    image: ctrl-exec-run-jobs
     environment:
-      CTRL_EXEC_API_URL: http://dispatcher:7445    # read by ctrl-exec-cli
+      CTRL_EXEC_API_URL: http://dispatcher:7445
+      CTRL_EXEC_USERNAME: run-jobs
+      CTRL_EXEC_TOKEN: ${CTRL_EXEC_TOKEN:-}         # if the auth hook requires a token
       JOBS_SCRIPTS_DIR: /etc/run-jobs/scripts
       JOBS_STATE_DIR: /var/lib/run-jobs/state
     volumes:
-      - run-jobs-scripts:/etc/run-jobs/scripts
-      - run-jobs-state:/var/lib/run-jobs/state
-    networks:
-      - ctrl-exec-net
-    depends_on:
-      - dispatcher
-
-volumes:
-  dispatcher-data:
-  dispatcher-registry:
-  agent-data:
-  ce-agent-plugins:
-  run-jobs-scripts:
-  run-jobs-state:
+      - ./scripts:/etc/run-jobs/scripts:ro          # job .sh/.conf pairs; edit on the host
+      - ./state:/var/lib/run-jobs/state             # must be writable by uid 10002
+      - /dev/log:/dev/log                           # optional: log to the host's syslog
+    tmpfs: [/tmp, /run]
+    cpus: "0.25"
+    mem_limit: 128m
+    memswap_limit: 128m
+    depends_on: [dispatcher]
+    networks: [ctrl-exec-net]
 
 networks:
   ctrl-exec-net:
+    name: ctrl-exec-net             # fixed name, so compose.run-jobs.yml can join it

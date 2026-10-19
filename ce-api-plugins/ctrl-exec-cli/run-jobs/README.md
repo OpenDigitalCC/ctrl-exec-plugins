@@ -206,7 +206,7 @@ The runner logs start, finish, exit code and duration for each job, a
 Lines go to syslog (`local0`, tag `run-jobs`) through `logger` when the
 container has a `/dev/log` socket. The image does not include a syslog daemon;
 without a socket the same lines go to stderr, prefixed `run-jobs:`, and
-`docker logs run-jobs` shows them. A logging failure never stops a tick.
+`docker compose logs run-jobs` shows them. A logging failure never stops a tick.
 
 ## Checking jobs without running them
 
@@ -214,9 +214,9 @@ without a socket the same lines go to stderr, prefixed `run-jobs:`, and
 executes nothing and writes nothing:
 
 ```bash
-docker exec run-jobs run-jobs.sh --explain
-docker exec run-jobs run-jobs.sh --explain --at '2026-10-20 02:00'
-docker exec run-jobs run-jobs.sh --explain daily-backup
+docker compose exec run-jobs run-jobs.sh --explain
+docker compose exec run-jobs run-jobs.sh --explain --at '2026-10-20 02:00'
+docker compose exec run-jobs run-jobs.sh --explain daily-backup
 ```
 
 On the host, point it at the scripts directory instead:
@@ -264,46 +264,56 @@ and 1 with any, so `--explain` can gate a deploy of new job files.
 
 ## Deployment
 
+`compose.yml` and `compose.run-jobs.yml` are examples. Adapt them before use:
+the dispatcher image tag and id, which ports are published and on which
+address, and the resource limits.
+
+Both run the containers hardened: read-only root filesystem, all capabilities
+dropped, `no-new-privileges`, bounded processes and open files, and memory and
+CPU limits. run-jobs runs as uid 10002 (set in `Dockerfile.run-jobs`) and
+writes only to its state directory and `/tmp`.
+
 ### With the ctrl-exec dispatcher (recommended)
 
-`run-jobs` and the dispatcher run together in a single compose on the same
-Docker network, with `run-jobs` reaching the dispatcher by service name.
+`compose.yml` runs `run-jobs` and the dispatcher together on the
+`ctrl-exec-net` network, with `run-jobs` reaching the dispatcher by service
+name. The dispatcher image is built from the ctrl-exec packages, not from this
+directory; `CE_VERSION` names its tag.
 
-#### Build and start
-
-Copy the CLI into the build context, then build and start:
+Copy the CLI into the build context, create the bind-mounted directories,
+then build and start:
 
 ```bash
 cp ../ctrl-exec-cli .
-docker compose up -d --build
+mkdir -p scripts state dispatcher/data dispatcher/registry
+sudo chown 10002:10002 state
+CE_VERSION=<dispatcher image tag> docker compose up -d --build
 ```
 
 #### Verify
 
 ```bash
-docker logs run-jobs
-docker exec run-jobs ctrl-exec-cli health
+docker compose logs run-jobs
+docker compose exec run-jobs ctrl-exec-cli health
+docker compose exec run-jobs run-jobs.sh --explain
 ```
 
-### Standalone (dispatcher on same host, different network)
+### Standalone (dispatcher started elsewhere on the same host)
 
-If `run-jobs` cannot join the dispatcher's network directly, connect it
-after starting:
+`compose.run-jobs.yml` runs `run-jobs` alone and joins the existing
+`ctrl-exec-net` network:
 
 ```bash
-docker compose up -d --build
-docker network connect ctrl-exec-net run-jobs
+cp ../ctrl-exec-cli .
+mkdir -p scripts state
+sudo chown 10002:10002 state
+docker compose -f compose.run-jobs.yml up -d --build
 ```
 
-Or publish the dispatcher API port to the host and use the host IP:
-
-```yaml
-environment:
-  CTRL_EXEC_API_URL: http://192.168.1.10:7445
-```
-
-Note: the API is plain HTTP. Only use a host IP when the host is on a
-privileged management network.
+If the dispatcher is not on a Docker network, point `CTRL_EXEC_API_URL` at
+the address its API is published on, for example
+`http://192.168.1.10:7445`. The API is plain HTTP: use a host address only on
+a privileged management network.
 
 ### Standalone (no ctrl-exec)
 
@@ -365,19 +375,19 @@ Scripts and state are bind-mounted from the host directory, so they persist
 across container rebuilds and are included in any host-level backup or migration.
 
 `./scripts`
-: Mount point: `/etc/run-jobs/scripts`. Place `.sh` and `.conf` pairs here.
-  Scripts must be executable (`chmod 755`).
+: Mount point: `/etc/run-jobs/scripts`, read-only in the container. Place
+  `.sh` and `.conf` pairs here. Scripts must be executable (`chmod 755`).
 
 `./state`
-: Mount point: `/var/lib/run-jobs/state`. Written by the runner. Can be
-  inspected directly on the host.
+: Mount point: `/var/lib/run-jobs/state`. Written by the runner, so it must
+  be writable by uid 10002. Can be inspected directly on the host.
 
 To add a script to a running container, copy files into the host `scripts/`
 directory and set permissions:
 
 ```bash
-cp myjob.sh myjob.conf /srv/docker-vol/ctrl-exec/scripts/
-chmod 755 /srv/docker-vol/ctrl-exec/scripts/myjob.sh
+cp myjob.sh myjob.conf scripts/
+chmod 755 scripts/myjob.sh
 ```
 
 The change takes effect at the next five-minute tick - no restart needed.

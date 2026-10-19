@@ -1,25 +1,38 @@
+# run-jobs on its own, joining the network of a dispatcher started
+# elsewhere. Same hardening as compose.yml; data in bind mounts under this
+# directory. Copy the CLI into the build context first: cp ../ctrl-exec-cli .
+
 services:
   run-jobs:
     build:
       context: .
       dockerfile: Dockerfile.run-jobs
-    container_name: run-jobs
+    image: ctrl-exec-run-jobs
     restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 200
+    ulimits:
+      nofile: { soft: 1024, hard: 4096 }
+      nproc: 200
     environment:
       CTRL_EXEC_API_URL: http://dispatcher:7445
-      CTRL_EXEC_TOKEN:                            # set if auth hook requires a token
       CTRL_EXEC_USERNAME: run-jobs
+      CTRL_EXEC_TOKEN: ${CTRL_EXEC_TOKEN:-}       # set if the auth hook requires a token
       JOBS_SCRIPTS_DIR: /etc/run-jobs/scripts
       JOBS_STATE_DIR: /var/lib/run-jobs/state
     volumes:
-      - run-jobs-scripts:/etc/run-jobs/scripts
-      - run-jobs-state:/var/lib/run-jobs/state
-    networks:
-      - ctrl-exec-net
-
-volumes:
-  run-jobs-scripts:
-  run-jobs-state:
+      - ./scripts:/etc/run-jobs/scripts:ro        # job .sh/.conf pairs; edit on host
+      - ./state:/var/lib/run-jobs/state           # scheduler state; owned by 10002
+      - /dev/log:/dev/log                         # log to the host's syslog
+    tmpfs: [/tmp, /run]
+    cpus: "0.25"
+    mem_limit: 128m
+    memswap_limit: 128m
+    mem_reservation: 64m
+    networks: [ctrl-exec-net]
 
 networks:
   ctrl-exec-net:

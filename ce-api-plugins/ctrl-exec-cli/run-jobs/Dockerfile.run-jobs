@@ -1,21 +1,26 @@
+# run-jobs - scheduler for ctrl-exec jobs. Build context: this directory,
+# with ctrl-exec-cli copied in from the parent directory.
+
 FROM debian:trixie-slim
 
+# jq: job scripts commonly parse ctrl-exec-cli --json output with it
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        bash \
+ && apt-get install -y --no-install-recommends \
         perl \
         bsdutils \
-    && rm -rf /var/lib/apt/lists/*
+        ca-certificates \
+        jq \
+ && rm -rf /var/lib/apt/lists/*
 
-# Install ctrl-exec CLI (single script, core modules only)
-COPY ctrl-exec-cli /usr/local/bin/ctrl-exec-cli
-RUN chmod 755 /usr/local/bin/ctrl-exec-cli
+# ctrl-exec CLI - single script, core Perl modules only
+COPY ctrl-exec-cli          /usr/local/bin/ctrl-exec-cli
+COPY run-jobs.sh            /usr/local/bin/run-jobs.sh
+COPY run-jobs-entrypoint.sh /usr/local/bin/run-jobs-entrypoint.sh
+RUN chmod 755 /usr/local/bin/ctrl-exec-cli \
+              /usr/local/bin/run-jobs.sh \
+              /usr/local/bin/run-jobs-entrypoint.sh
 
-# Install job runner
-COPY run-jobs.sh /usr/local/bin/run-jobs.sh
-RUN chmod 755 /usr/local/bin/run-jobs.sh
+# Unprivileged; the state bind mount must be writable by this uid
+USER 10002:10002
 
-COPY run-jobs-entrypoint.sh /run-jobs-entrypoint.sh
-RUN chmod 755 /run-jobs-entrypoint.sh
-
-ENTRYPOINT ["/run-jobs-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/run-jobs-entrypoint.sh"]
