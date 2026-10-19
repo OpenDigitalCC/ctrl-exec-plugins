@@ -22,7 +22,9 @@ Do not expose the API port to untrusted networks.
 - executes any job whose schedule matches the current time
 - supports recurring schedules (`schedule=`) and one-off execution (`runat=`)
 - records exit code, timing, trigger, and output to a state directory
-- logs activity to syslog (`local0`) forwarded over TLS to a remote syslog server
+- logs activity to syslog (`local0`) when the container has a syslog socket,
+  and to the container log otherwise
+- explains, without running anything, what a tick would run (`--explain`)
 
 Jobs are bash scripts. Each script has a sidecar `.conf` file that defines its
 schedule. The ctrl-exec CLI is installed in the container and available to scripts
@@ -36,8 +38,7 @@ ctrl-exec-cli/
 └── run-jobs/
     ├── Dockerfile.run-jobs
     ├── compose.yml
-    ├── rsyslog.conf
-    ├── rsyslog-forward.conf
+    ├── compose.run-jobs.yml
     ├── run-jobs.sh
     ├── run-jobs-entrypoint.sh
     ├── README.md
@@ -60,7 +61,26 @@ Each job is a pair of files in the scripts directory.
 `backup.conf`
 : Sidecar config. Supports two keys: `schedule=` for recurring jobs and `runat=`
   for one-off execution. Both may appear in the same file, and multiple `runat=`
-  lines are supported.
+  lines are supported. Any other keys are ignored by the runner, so a job can
+  keep its own settings in the same file.
+
+### When a job runs
+
+The runner ticks on every five-minute boundary. Each tick covers every minute
+since the previous tick, so a job runs at the first tick at or after the minute
+it is scheduled for - never before it - and at most once per tick:
+
+- `schedule = 7 9 * * *` runs at the 09:10 tick.
+- `schedule = * * * * *` runs once per tick, every five minutes.
+- `runat = 2026-04-02 22:03` runs at the 22:05 tick.
+
+When a tick overruns because a job is slow, the next tick picks up the minutes
+it missed. The runner records the last tick in `.last-tick` in the state
+directory, so a restart neither repeats a job nor skips one. After a gap of
+more than an hour, such as a container that was stopped, missed minutes are
+not caught up: the first tick covers only the last five minutes.
+
+Jobs in a tick run one after another, in file name order.
 
 ### schedule=
 
@@ -70,9 +90,15 @@ Standard five-field cron expression:
 schedule = 0 2 * * *
 ```
 
-Supports `*`, `*/n` step syntax, and comma-separated lists per field. The runner
-fires every five minutes - schedules with finer granularity than five minutes will
-not trigger more frequently than that.
+Fields are minute, hour, day of month, month and day of week, as in
+cron(5). Each field takes `*`, a number, a range (`1-5`), a step on any of
+those (`*/15`, `9-17/4`, `5/20`), or a comma-separated list of them. Sunday is
+`0` or `7`. When both the day-of-month and day-of-week fields are restricted, a
+day matching either one runs the job, as cron does. Names (`mon`, `jan`) and
+the `@daily` forms are not supported.
+
+An invalid expression is logged on every tick as a `problem:` line naming the
+field at fault, and the job does not run.
 
 ### runat=
 
@@ -82,9 +108,10 @@ ISO datetime for a one-off execution:
 runat = 2026-04-02 22:00
 ```
 
-The job runs once when the five-minute tick falls within the specified minute. Once
-that time has passed the entry is silently ignored - leave the file in place, no
-cleanup required. Multiple `runat=` lines are supported:
+Any time `date -d` understands is accepted. The job runs once, at the first
+tick at or after that minute. Once that time has passed the entry is ignored -
+leave the file in place, no cleanup required. Multiple `runat=` lines are
+supported:
 
 ```
 runat = 2026-04-02 22:00
@@ -93,8 +120,8 @@ runat = 2026-04-05 22:00
 
 ### Combining schedule= and runat=
 
-Both may coexist in the same `.conf`. If `schedule=` matches on a given tick,
-the script runs once and `runat=` is not evaluated for that tick:
+Both may coexist in the same `.conf`. If `schedule=` and a `runat=` fall in
+the same tick, the script runs once, with trigger `schedule`:
 
 ```
 schedule = 0 3 * * *
@@ -163,25 +190,77 @@ trigger=runat=2026-04-02 22:00
 `backup.out`
 : Combined stdout and stderr from the last run.
 
-Syslog (`local0`, tag `run-jobs`) receives start, finish, exit code, and duration
-for each job, and a `tick: nothing due` line when nothing is scheduled. Messages
-are forwarded over TLS to the remote syslog server at `log:6514`.
+A job that exits non-zero is recorded here and does not stop the tick or the
+runner.
 
-## Syslog configuration
+`.last-tick`
+: The last tick the runner covered, in epoch seconds. Written by the runner;
+  see [When a job runs](#when-a-job-runs).
 
-`rsyslog` runs inside the container. Two config files are mounted from the host:
+## Logging
 
-`rsyslog.conf`
-: Minimal base config - loads `imuxsock` (for `logger`) and disables `imklog`
-  (not available in containers).
+The runner logs start, finish, exit code and duration for each job, a
+`problem:` line for each invalid `schedule=` or `runat=`, and a
+`tick: nothing due` line when nothing ran.
 
-`rsyslog-forward.conf`
-: Forwards `local0.*` over TLS to `log:6514` using the system CA bundle
-  (`/etc/ssl/certs/ca-certificates.crt`). Compatible with Let's Encrypt
-  certificates on the remote server.
+Lines go to syslog (`local0`, tag `run-jobs`) through `logger` when the
+container has a `/dev/log` socket. The image does not include a syslog daemon;
+without a socket the same lines go to stderr, prefixed `run-jobs:`, and
+`docker logs run-jobs` shows them. A logging failure never stops a tick.
 
-Both files must be present on the host before starting the container. They are
-mounted read-only.
+## Checking jobs without running them
+
+`--explain` reports what a tick would do and when each job runs next. It
+executes nothing and writes nothing:
+
+```bash
+docker exec run-jobs run-jobs.sh --explain
+docker exec run-jobs run-jobs.sh --explain --at '2026-10-20 02:00'
+docker exec run-jobs run-jobs.sh --explain daily-backup
+```
+
+On the host, point it at the scripts directory instead:
+
+```bash
+./run-jobs.sh --explain --dir ./scripts
+```
+
+```
+run-jobs explain - nothing is executed
+tick       2026-10-20 02:00 UTC, covering 01:56-02:00
+scripts    /etc/run-jobs/scripts
+
+daily-backup
+  schedule   0 2 * * *
+  runat      2026-04-02 22:00 - past, ignored
+  this tick  RUNS (trigger=schedule)
+  next       2026-10-21 02:00
+             2026-10-22 02:00
+             2026-10-23 02:00
+
+weekday-report
+  schedule   7 9 * * 1-5
+  this tick  -
+  next       2026-10-20 09:10 (for 09:07)
+             2026-10-21 09:10 (for 09:07)
+             2026-10-22 09:10 (for 09:07)
+
+check-agents
+  schedule   */15 * * * mon
+  this tick  -
+  PROBLEM    schedule '*/15 * * * mon': day-of-week: bad value 'mon'
+
+3 job(s): 1 would run in this tick, 1 problem(s)
+```
+
+`--at` takes any time `date -d` understands; the default is the next tick.
+Name one or more jobs to explain only those. Explain covers the schedule only:
+it shows that a job would start, not what the job would do once started.
+
+Problems reported: an invalid or never-matching `schedule=`, a `runat=` that
+is not a date, a script that is missing or not executable, a `.sh` with no
+`.conf`, and a `.conf` with neither key. The exit status is 0 with no problems
+and 1 with any, so `--explain` can gate a deploy of new job files.
 
 ## Deployment
 
@@ -302,3 +381,4 @@ chmod 755 /srv/docker-vol/ctrl-exec/scripts/myjob.sh
 ```
 
 The change takes effect at the next five-minute tick - no restart needed.
+Run `--explain` first to confirm the job will run when you expect.

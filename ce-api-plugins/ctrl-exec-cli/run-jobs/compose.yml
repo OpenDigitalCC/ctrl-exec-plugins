@@ -43,8 +43,7 @@ services:
     container_name: run-jobs
     restart: unless-stopped
     environment:
-      CTRL_EXEC_HOST: dispatcher    # used by ctrl-exec-cli
-      CTRL_EXEC_PORT: 7445
+      CTRL_EXEC_API_URL: http://dispatcher:7445    # read by ctrl-exec-cli
       JOBS_SCRIPTS_DIR: /etc/run-jobs/scripts
       JOBS_STATE_DIR: /var/lib/run-jobs/state
     volumes:
