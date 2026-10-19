@@ -7,6 +7,7 @@
 #
 # Multiple runat= lines are supported. schedule= and runat= may coexist.
 # A runat= that has passed will never trigger again - leave the file in place.
+# Other keys are left for the job itself to read.
 
 set -euo pipefail
 
@@ -22,51 +23,159 @@ log() {
         || true
 }
 
-# Parse a cron expression and return 0 if it matches the given timestamp
-cron_matches() {
-    local expression="$1"
-    local timestamp="$2"
+# cron_field FIELD MIN MAX
+# Expand one cron field to a sorted, space-delimited set (" 0 15 30 45 ") on
+# stdout. Accepts *, N, N-M and a /STEP on any of them, comma-separated, as
+# cron(5) does; N/STEP means N-MAX/STEP. On an invalid field prints the reason
+# and returns 1.
+cron_field() {
+    local field=$1
+    local min=$2
+    local max=$3
+    local item range step lo hi v
+    local -a items
+    local -a hit=()
 
-    local minute hour dom month dow
-    read -r minute hour dom month dow <<< "$expression"
-
-    local t_minute t_hour t_dom t_month t_dow
-    t_minute=$(date -d "@$timestamp" +%-M)
-    t_hour=$(date -d "@$timestamp"   +%-H)
-    t_dom=$(date -d "@$timestamp"    +%-d)
-    t_month=$(date -d "@$timestamp"  +%-m)
-    t_dow=$(date -d "@$timestamp"    +%u)  # 1=Mon ... 7=Sun
-
-    field_matches() {
-        local field="$1"
-        local value="$2"
-        if [[ "$field" == "*" ]]; then
-            return 0
-        fi
-        # Handle */n step syntax
-        if [[ "$field" == */* ]]; then
-            local step="${field#*/}"
-            if (( value % step == 0 )); then
-                return 0
+    IFS=',' read -r -a items <<< "$field"
+    for item in "${items[@]}"; do
+        range=$item
+        step=1
+        if [[ $item == */* ]]; then
+            range=${item%%/*}
+            step=${item#*/}
+            if [[ ! $step =~ ^[0-9]+$ ]] || (( 10#$step == 0 )); then
+                echo "bad step in '$item'"
+                return 1
             fi
+            step=$(( 10#$step ))
+        fi
+        if [[ $range == "*" ]]; then
+            lo=$min
+            hi=$max
+        elif [[ $range =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            lo=$(( 10#${BASH_REMATCH[1]} ))
+            hi=$(( 10#${BASH_REMATCH[2]} ))
+        elif [[ $range =~ ^[0-9]+$ ]]; then
+            lo=$(( 10#$range ))
+            hi=$lo
+            if [[ $item == */* ]]; then
+                hi=$max
+            fi
+        else
+            echo "bad value '$item'"
             return 1
         fi
-        # Handle comma-separated list
-        local IFS=','
-        for part in $field; do
-            if [[ "$part" == "$value" ]]; then
-                return 0
-            fi
+        if (( lo < min || hi > max || lo > hi )); then
+            echo "'$item' is outside $min-$max"
+            return 1
+        fi
+        for (( v = lo; v <= hi; v += step )); do
+            hit[v]=1
         done
-        return 1
-    }
+    done
 
-    field_matches "$minute" "$t_minute" || return 1
-    field_matches "$hour"   "$t_hour"   || return 1
-    field_matches "$dom"    "$t_dom"    || return 1
-    field_matches "$month"  "$t_month"  || return 1
-    field_matches "$dow"    "$t_dow"    || return 1
-    return 0
+    local out=" "
+    for (( v = min; v <= max; v++ )); do
+        if [[ -n ${hit[v]:-} ]]; then
+            out+="$v "
+        fi
+    done
+    echo "$out"
+}
+
+# cron_parse EXPRESSION
+# Parse a five-field expression into CRON_MIN, CRON_HOUR, CRON_DOM, CRON_MON
+# and CRON_DOW for cron_match. Returns 1 with CRON_ERROR set when invalid.
+cron_parse() {
+    local -a f
+    local -a names=(minute hour day-of-month month day-of-week)
+    local -a mins=(0 0 1 1 0)
+    local -a maxs=(59 23 31 12 7)
+    local -a sets=()
+    local i s
+
+    CRON_ERROR=""
+    read -r -a f <<< "$1"
+    if (( ${#f[@]} != 5 )); then
+        CRON_ERROR="needs 5 fields, has ${#f[@]}"
+        return 1
+    fi
+    for i in 0 1 2 3 4; do
+        if ! s=$(cron_field "${f[i]}" "${mins[i]}" "${maxs[i]}"); then
+            CRON_ERROR="${names[i]}: $s"
+            return 1
+        fi
+        sets[i]=$s
+    done
+
+    CRON_MIN=${sets[0]}
+    CRON_HOUR=${sets[1]}
+    CRON_DOM=${sets[2]}
+    CRON_MON=${sets[3]}
+    CRON_DOW=${sets[4]}
+    # Sunday is both 0 and 7
+    if [[ $CRON_DOW == *" 7 "* ]]; then
+        CRON_DOW+="0 "
+    fi
+    # cron(5): when both day fields are restricted, either one may match
+    CRON_DAY_OR=0
+    if [[ ${f[2]} != \** && ${f[4]} != \** ]]; then
+        CRON_DAY_OR=1
+    fi
+}
+
+# cron_match MINUTE HOUR DOM MONTH DOW - against the last cron_parse.
+# DOW is 0-6 with 0 = Sunday, as date +%w gives it.
+cron_match() {
+    local dom_ok=0
+    local dow_ok=0
+
+    if [[ $CRON_MIN != *" $1 "* || $CRON_HOUR != *" $2 "* || $CRON_MON != *" $4 "* ]]; then
+        return 1
+    fi
+    if [[ $CRON_DOM == *" $3 "* ]]; then
+        dom_ok=1
+    fi
+    if [[ $CRON_DOW == *" $5 "* ]]; then
+        dow_ok=1
+    fi
+    if (( CRON_DAY_OR )); then
+        (( dom_ok || dow_ok ))
+    else
+        (( dom_ok && dow_ok ))
+    fi
+}
+
+# read_conf FILE
+# Read schedule= into CONF_SCHEDULE and every runat= into CONF_RUNAT. Problems
+# with those two keys are collected in CONF_PROBLEMS; other keys belong to the
+# job and are skipped.
+read_conf() {
+    local line key value
+
+    CONF_SCHEDULE=""
+    CONF_RUNAT=()
+    CONF_PROBLEMS=()
+    # The || clause keeps a last line that has no trailing newline
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line%$'\r'}
+        if [[ ! $line =~ ^[[:space:]]*([A-Za-z_]+)[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$ ]]; then
+            continue
+        fi
+        key=${BASH_REMATCH[1]}
+        value=${BASH_REMATCH[2]}
+        case $key in
+            schedule)
+                if [[ -n $CONF_SCHEDULE ]]; then
+                    CONF_PROBLEMS+=("schedule is set more than once; the last one is used")
+                fi
+                CONF_SCHEDULE=$value
+                ;;
+            runat)
+                CONF_RUNAT+=("$value")
+                ;;
+        esac
+    done < "$1"
 }
 
 # Return 0 if a runat= datetime falls within the current 5-minute window
@@ -124,10 +233,13 @@ main() {
         exit 1
     fi
 
-    # Round current time down to the nearest minute for cron matching
+    # Round current time down to the nearest minute for cron matching.
+    # RUN_JOBS_NOW (epoch seconds) fixes the clock for the test suite.
     local now
-    now=$(date +%s)
+    now=${RUN_JOBS_NOW:-$(date +%s)}
     local now_minute=$(( now - (now % 60) ))
+    local -a now_fields
+    read -r -a now_fields <<< "$(date -d "@$now_minute" '+%-M %-H %-d %-m %w')"
 
     local ran=0
 
@@ -143,22 +255,17 @@ main() {
         local name
         name=$(basename "$script" .sh)
 
-        # Read all keys - collect schedule and all runat values
-        local schedule=""
-        local -a runat_list=()
-
-        while IFS='=' read -r key value; do
-            key="${key// /}"
-            value="${value# }"
-            case "$key" in
-                schedule) schedule="$value" ;;
-                runat)    runat_list+=("$value") ;;
-            esac
-        done < "$conf"
+        read_conf "$conf"
+        local problem
+        for problem in "${CONF_PROBLEMS[@]}"; do
+            log "problem: $name - $problem"
+        done
 
         # Check schedule
-        if [[ -n "$schedule" ]]; then
-            if cron_matches "$schedule" "$now_minute"; then
+        if [[ -n "$CONF_SCHEDULE" ]]; then
+            if ! cron_parse "$CONF_SCHEDULE"; then
+                log "problem: $name - schedule '$CONF_SCHEDULE': $CRON_ERROR"
+            elif cron_match "${now_fields[@]}"; then
                 run_script "$script" "schedule"
                 (( ran++ )) || true
                 continue   # already ran this tick - skip runat checks
@@ -166,7 +273,8 @@ main() {
         fi
 
         # Check each runat
-        for runat in "${runat_list[@]}"; do
+        local runat
+        for runat in "${CONF_RUNAT[@]}"; do
             if runat_matches "$runat" "$now_minute"; then
                 run_script "$script" "runat=$runat"
                 (( ran++ )) || true
@@ -181,4 +289,7 @@ main() {
     fi
 }
 
-main
+# Sourcing the file (as the test suite does) defines the functions only
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
+fi
