@@ -1,19 +1,21 @@
 {
-  "version": "1",
-  "description": "Receive a file archive over a one-shot throwaway-TLS listener and write it to a path on this host. Returns the listener cert fingerprint and the received byte count.",
+  "version": "2",
+  "description": "Receive a file archive over a one-shot throwaway-TLS listener and write it to a path on this host. With port and output it starts a detached listener and returns at once with the listener cert fingerprint and a transfer id. With status (a transfer id) and the same output it reports pending, received (byte count and sha256), failed or timedout.",
   "destructive": true,
   "arguments": {
     "type": "object",
     "properties": {
-      "port":    { "type": "integer", "minimum": 1, "maximum": 65535, "description": "TCP port to listen on." },
-      "output":  { "type": "string", "description": "Output path for the received archive on this host." },
-      "timeout": { "type": "integer", "description": "Seconds to wait for the connection and transfer (default 300)." }
+      "port":    { "type": "integer", "minimum": 1, "maximum": 65535, "description": "TCP port to listen on (receive call)." },
+      "output":  { "type": "string", "description": "Output path for the received archive on this host (both calls: the status file lives in its directory)." },
+      "timeout": { "type": "integer", "description": "Seconds the listener waits for the connection and transfer (receive call, default 300)." },
+      "status":  { "type": "string", "description": "Transfer id returned by an earlier receive call; makes this a status call." }
     },
-    "required": ["port", "output"]
+    "required": ["output"]
   },
   "argv": [
     { "arg": "port",    "flag": "--port" },
     { "arg": "output",  "flag": "--output" },
-    { "arg": "timeout", "flag": "--timeout" }
+    { "arg": "timeout", "flag": "--timeout" },
+    { "arg": "status",  "flag": "--status" }
   ]
 }

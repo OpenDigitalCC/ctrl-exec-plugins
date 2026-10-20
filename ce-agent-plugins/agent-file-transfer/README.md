@@ -16,7 +16,7 @@ One component:
 : Coordinator. Runs on the dispatcher host. Instructs the receiving agent to
   start `agent-file-receive`, captures the cert fingerprint, instructs the
   sending agent to run `agent-file-transfer` pointing directly at the receiver,
-  then confirms completion from both sides.
+  then confirms receipt with the receiver's `--status` call.
 
 No new agent scripts are required. This plugin reuses `agent-file-transfer`
 (sender) and `agent-file-receive` (receiver) which must both be installed and
@@ -34,8 +34,75 @@ local network relative to the dispatcher.
 The agent-side receiver (`agent-file-receive.sh`) ships a schema sidecar
 (`agent-file-receive.sh.schema.json`) so it is advertised as a typed tool via
 `/discovery` and the `ctrl-exec-mcp` bridge - its `port` / `output` / `timeout`
-arguments are typed, and it is flagged **destructive** (it writes a file to the
-receiving host).
+/ `status` arguments are typed, and it is flagged **destructive** (it writes a
+file to the receiving host).
+
+## How the receiver works
+
+`agent-file-receive.sh` is one allowlisted script with two calls.
+
+Receive (`--port <n> --output <file> [--timeout <s>]`)
+: Generates a throwaway cert, starts a **detached listener** (its own session,
+  stdin/stdout/stderr on `/dev/null`) and returns at once with exit 0 and two
+  lines on stdout: `fingerprint:<hex>` and `id:<hex>`. The ctrl-exec run is
+  finished by then, so the coordinator has the fingerprint straight away; no
+  `async` run is needed. The listener keeps its own `--timeout`, writes the
+  data to `--output`, verifies it as a gzip tar archive, deletes its cert, and
+  records the result in a status file beside the output
+  (`<output dir>/.agent-file-receive.<id>.status`). Status files older than
+  a day are removed by the next receive call in that directory.
+
+Status (`--status <id> --output <file>`)
+: Reads that status file. `--output` is the same path as the receive call (the
+  status file lives in its directory). Prints `pending` (exit 0);
+  `received:<bytes>` and `sha256:<hex>` (exit 0); `failed:<reason>` or
+  `timedout:<reason>` (exit 1). An unknown id exits 1. The coordinators call
+  this through `/run` until it reports a final state.
+
+Run with no arguments, or with an unknown one, the script prints usage and
+exits 2. On failure or timeout the partial output is renamed to
+`<file>.failed.<epoch>`.
+
+### Allowlisting and profile
+
+Both calls are the same script, so one `scripts.conf` entry covers them:
+
+```
+agent-file-receive = /opt/ctrl-exec-scripts/agent-file-receive.sh profile=receive
+```
+
+The receiving agent's profile must let the script write the output directory,
+because the output, the status file and any `.failed` file go there:
+
+- a profile with a `writable` list needs the output directory on it (the
+  listener keeps the profile's mount namespace for as long as it lives, so the
+  list applies to it exactly as to the run that started it);
+- a profile with no `writable` list needs the output directory writable by the
+  profile's `run_as` user.
+
+If the directory cannot be written the receive call fails at once with exit 1
+and says so.
+
+### Caveats
+
+- Under systemd the detached listener stays in the executor's cgroup, and
+  `ctrl-exec-exec.service` uses the default `KillMode` (control-group). Stopping
+  or restarting the executor (an upgrade, `Restart=on-failure`) therefore kills
+  an in-flight listener: that transfer fails and must be retried. Starting a
+  receive call after the restart is enough; nothing is left behind except the
+  status file, which reports `failed`.
+- The sender (`ce-push-blob`, and the `agent-file-transfer` sender) streams
+  with `openssl s_client`. On Alpine 3.21 (OpenSSL 3.3.7) `s_client` was seen
+  to send nothing when a single read from stdin returns 8192 bytes or more, so
+  an archive larger than that never arrives and the transfer times out. Run the
+  coordinator on a host with another OpenSSL build (Debian's 3.0 and 3.5 send
+  correctly); the receiver side is unaffected.
+- One transfer per port at a time; the listener serves one archive and then
+  exits.
+- A connection that sends no data (a fingerprint check) does not end the
+  transfer. Any data sent on it does: a sender must not write to a probe
+  connection and must close its side when the archive is complete
+  (`openssl s_client -quiet -no_ign_eof -nocommands`).
 
 ## Relay via dispatcher
 
@@ -65,6 +132,9 @@ the intermediate file, and doubles the transfer time. The direct method
 (`ce-file-transfer`) is preferred when network connectivity permits.
 
 ## Dependencies
+
+Receiving agent: `openssl`, `tar`, `ss` (iproute2), `setsid` (util-linux),
+`sha256sum` (coreutils).
 
 Agent hosts:
 
@@ -122,6 +192,19 @@ No `scripts.conf` changes in this plugin. Entries are managed by
 
 Environment variables: `CTRL_EXEC_API_URL`, `CTRL_EXEC_TOKEN`, `CTRL_EXEC_USERNAME`
 
+### agent-file-receive (on the receiving agent)
+
+```
+--port <n>          TCP port to listen on (receive)
+--output <file>     Output path for the archive (receive and status)
+--timeout <n>       Seconds the listener waits (receive, default 300)
+--status <id>       Report the transfer <id> printed by the receive call
+```
+
+Both coordinators (`ce-file-transfer` and `ce-push-blob`) pass the token as
+the API requires: in the body of `POST /run`, and as `Authorization: Bearer`
+on every `GET /status` poll.
+
 ## Examples
 
 ```bash
@@ -151,7 +234,8 @@ Dispatcher                  Sending agent (--from)     Receiving agent (--to)
 ----------                  ----------------------     ----------------------
 Dispatch agent-file-receive ─────────────────────────────────────────────>
                                                        Generate cert
-<─────────────────────────────────────────────── Print fingerprint:<hex>
+                                                       Start detached listener
+<─────────────────────────────── Print fingerprint:<hex> and id:<hex>, exit 0
 Dispatch agent-file-transfer ──────────────────>
 (with --dest <to-host:port>
  --cert-fingerprint <hex>)
@@ -160,7 +244,9 @@ Dispatch agent-file-transfer ─────────────────
                             Connect ─────────────────────────────────────>
                             Stream archive ──────────────────────────────>
                                                        Receive and verify
-                            Print size:<bytes>         Print received:<bytes>
+                            Print size:<bytes>         Verify, write status file
+Dispatch agent-file-receive --status <id> ───────────────────────────────>
+<─────────────────────────────────────── received:<bytes> sha256:<hex>
 <──────────── Confirm completion from both sides ─────────────────────────
 ```
 
@@ -170,8 +256,8 @@ Control channel
 : Both agents are authenticated via ctrl-exec mTLS before any transfer begins.
 
 Data channel
-: The receiving agent generates a throwaway TLS cert per transfer. The cert
-  is deleted on exit.
+: The receiving agent generates a throwaway TLS cert per transfer. The
+  listener deletes it when the transfer ends, whatever the outcome.
 
 Fingerprint binding
 : The receiver's fingerprint is returned through the authenticated ctrl-exec

@@ -2,11 +2,15 @@
 # ce-push-blob - Push a file archive from the dispatcher host to an agent
 #
 # Runs on the dispatcher host. Dispatches agent-file-receive to the target
-# agent via the ctrl-exec API, captures the cert fingerprint from the agent
-# stdout, then streams the source file to the agent over TLS.
+# agent via the ctrl-exec API. The receiver starts a detached listener and
+# returns at once with its cert fingerprint and a transfer id; this tool then
+# streams the source file to the agent over TLS and confirms receipt by
+# calling agent-file-receive --status through the API.
 #
 # Requires:
 #   - agent-file-receive.sh installed and allowlisted on the target agent
+#     (the same script answers the --status call; no second entry is needed)
+#   - the receiver's profile must let it write the output directory
 #   - curl and jq installed on the dispatcher host
 #   - CTRL_EXEC_API_URL set (or --api-url provided)
 #   - CTRL_EXEC_TOKEN set if auth is configured (or --token provided)
@@ -116,6 +120,40 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
+# API helpers
+# ---------------------------------------------------------------------------
+
+api_run() {
+    curl -s -X POST "${API_URL}/run" \
+        -H 'Content-Type: application/json' \
+        -d "$1"
+}
+
+# The API reads the status token from the Authorization header, not the body.
+api_status() {
+    curl -s -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/$1"
+}
+
+# await_result <response> <reqid> <limit>
+# Print the run result: the /run response when it already carries one,
+# otherwise the /status record once it does. Non-zero on timeout.
+await_result() {
+    local resp="$1" reqid="$2" limit="$3" start now
+    start=$(date +%s)
+    while :; do
+        if [[ -n "$(echo "$resp" | jq -r '.results[0].exit // empty' 2>/dev/null)" ]]; then
+            echo "$resp"
+            return 0
+        fi
+        [[ -n "$reqid" ]] || return 1
+        now=$(date +%s)
+        (( now - start > limit )) && return 1
+        sleep 1
+        resp=$(api_status "$reqid" 2>/dev/null || echo '{}')
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Step 1: Dispatch agent-file-receive to the target agent
 # ---------------------------------------------------------------------------
 
@@ -136,10 +174,7 @@ REQUEST=$(jq -n \
         token:    $token
     }')
 
-# Use async - agent-file-receive blocks until transfer completes
-RESPONSE=$(curl -s -X POST "${API_URL}/run" \
-    -H 'Content-Type: application/json' \
-    -d "$REQUEST")
+RESPONSE=$(api_run "$REQUEST")
 
 API_OK=$(echo "$RESPONSE" | jq -r '.ok' 2>/dev/null || echo "false")
 
@@ -153,34 +188,32 @@ fi
 REQID=$(echo "$RESPONSE" | jq -r '.reqid // ""')
 
 # ---------------------------------------------------------------------------
-# Step 2: Poll for fingerprint from agent stdout
+# Step 2: Read fingerprint and transfer id from the receiver's stdout
 # ---------------------------------------------------------------------------
+
+# The receiver detaches its listener and exits at once, so the run result
+# carries the fingerprint. If the API answered without a result yet, poll
+# GET /status/<reqid> (with the token) until it has one.
 
 echo "==> Waiting for agent receiver to start (reqid: $REQID)..."
 
-FINGERPRINT=''
-WAIT_START=$(date +%s)
-WAIT_LIMIT=30
+RESPONSE=$(await_result "$RESPONSE" "$REQID" 30) || {
+    echo "Error: Timed out waiting for agent fingerprint" >&2
+    exit 1
+}
 
-while [[ -z "$FINGERPRINT" ]]; do
-    STATUS=$(curl -s -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/${REQID}" 2>/dev/null || echo '{}')
-    STATUS_OK=$(echo "$STATUS" | jq -r '.ok' 2>/dev/null || echo "false")
+RECV_EXIT=$(echo "$RESPONSE" | jq -r '.results[0].exit // ""')
+AGENT_STDOUT=$(echo "$RESPONSE" | jq -r '.results[0].stdout // ""')
+FINGERPRINT=$(echo "$AGENT_STDOUT" | grep '^fingerprint:' \
+    | head -1 | sed 's/fingerprint://') || true
+TRANSFER_ID=$(echo "$AGENT_STDOUT" | grep '^id:' \
+    | head -1 | sed 's/id://') || true
 
-    if [[ "$STATUS_OK" == "true" ]]; then
-        AGENT_STDOUT=$(echo "$STATUS" | jq -r '.results[0].stdout // ""')
-        FINGERPRINT=$(echo "$AGENT_STDOUT" | grep '^fingerprint:' \
-            | head -1 | sed 's/fingerprint://') || true
-    fi
-
-    if [[ -z "$FINGERPRINT" ]]; then
-        NOW=$(date +%s)
-        if (( NOW - WAIT_START > WAIT_LIMIT )); then
-            echo "Error: Timed out waiting for agent fingerprint" >&2
-            exit 1
-        fi
-        sleep 1
-    fi
-done
+if [[ "$RECV_EXIT" != "0" || -z "$FINGERPRINT" || -z "$TRANSFER_ID" ]]; then
+    echo "Error: Agent receiver did not start (exit ${RECV_EXIT:-unknown})" >&2
+    echo "$RESPONSE" | jq -r '.results[0].stderr // ""' >&2
+    exit 1
+fi
 
 echo "==> Agent receiver ready. Fingerprint: $FINGERPRINT"
 
@@ -194,10 +227,12 @@ FILE_SIZE=$(stat -c '%s' "$SOURCE_FILE")
 
 # Probe fingerprint first
 PROBE_LOG="$TMPDIR_COORD/probe.log"
-SERVER_FP=$(echo "" | timeout 10 openssl s_client \
+# (Send nothing on the probe connection: the receiver would take any byte as
+# the start of the archive.)
+SERVER_FP=$(timeout 10 openssl s_client \
     -connect "${AGENT_ADDR}:${TRANSFER_PORT}" \
     -no_ign_eof \
-    2>"$PROBE_LOG" \
+    2>"$PROBE_LOG" </dev/null \
     | openssl x509 -fingerprint -sha256 -noout 2>/dev/null \
     | sed 's/.*Fingerprint=//' | tr -d ':' | tr '[:lower:]' '[:upper:]') || true
 
@@ -216,10 +251,12 @@ if [[ "$SERVER_FP" != "$FP_NORMALISED" ]]; then
     exit 1
 fi
 
-# Stream
+# Stream. -no_ign_eof closes the connection at end of file (-quiet alone
+# would leave it open); -nocommands stops s_client treating a line "R" or "Q"
+# in the binary data as a command.
 if ! openssl s_client \
     -connect "${AGENT_ADDR}:${TRANSFER_PORT}" \
-    -quiet \
+    -quiet -no_ign_eof -nocommands \
     2>/dev/null \
     < "$SOURCE_FILE"; then
     echo "Error: Transfer failed" >&2
@@ -233,22 +270,40 @@ fi
 echo "==> Waiting for agent to confirm receipt ..."
 
 RECEIVED_SIZE=''
+RECEIVED_SHA=''
 CONFIRM_START=$(date +%s)
 CONFIRM_LIMIT=30
 
-while [[ -z "$RECEIVED_SIZE" ]]; do
-    STATUS=$(curl -s -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/${REQID}" 2>/dev/null || echo '{}')
-    AGENT_EXIT=$(echo "$STATUS" | jq -r '.results[0].exit // ""')
+STATUS_REQUEST=$(jq -n \
+    --arg host "$AGENT_HOST" \
+    --arg username "$USERNAME" \
+    --arg token "$TOKEN" \
+    --arg id "$TRANSFER_ID" \
+    --arg output "$OUTPUT" \
+    '{
+        hosts:    [$host],
+        script:   "agent-file-receive",
+        args:     ["--status", $id, "--output", $output],
+        username: $username,
+        token:    $token
+    }')
+
+while :; do
+    SRESP=$(api_run "$STATUS_REQUEST")
+    SREQID=$(echo "$SRESP" | jq -r '.reqid // ""' 2>/dev/null || true)
+    SRESP=$(await_result "$SRESP" "$SREQID" 10) || SRESP='{}'
+    AGENT_EXIT=$(echo "$SRESP" | jq -r '.results[0].exit // ""')
+    AGENT_STDOUT=$(echo "$SRESP" | jq -r '.results[0].stdout // ""')
 
     if [[ "$AGENT_EXIT" == "0" ]]; then
-        AGENT_STDOUT=$(echo "$STATUS" | jq -r '.results[0].stdout // ""')
         RECEIVED_SIZE=$(echo "$AGENT_STDOUT" | grep '^received:' \
-            | sed 's/received://') || true
+            | head -1 | sed 's/received://') || true
+        RECEIVED_SHA=$(echo "$AGENT_STDOUT" | grep '^sha256:' \
+            | head -1 | sed 's/sha256://') || true
         [[ -n "$RECEIVED_SIZE" ]] && break
     elif [[ -n "$AGENT_EXIT" && "$AGENT_EXIT" != "0" ]]; then
-        AGENT_STDERR=$(echo "$STATUS" | jq -r '.results[0].stderr // ""')
-        echo "Error: Agent receiver failed (exit $AGENT_EXIT)" >&2
-        [[ -n "$AGENT_STDERR" ]] && echo "$AGENT_STDERR" >&2
+        echo "Error: Agent receiver failed: ${AGENT_STDOUT:-no status}" >&2
+        echo "$SRESP" | jq -r '.results[0].stderr // ""' >&2
         exit 1
     fi
 
@@ -257,7 +312,7 @@ while [[ -z "$RECEIVED_SIZE" ]]; do
         echo "Warning: Could not confirm receipt from agent" >&2
         break
     fi
-    sleep 2
+    sleep 1
 done
 
 # ---------------------------------------------------------------------------
@@ -274,6 +329,7 @@ echo "  File:    $SOURCE_FILE"
 echo "  Output:  $OUTPUT"
 echo "  Sent:    ${FILE_SIZE} bytes"
 [[ -n "$RECEIVED_SIZE" ]] && echo "  Recvd:   ${RECEIVED_SIZE} bytes"
+[[ -n "$RECEIVED_SHA" ]]  && echo "  SHA-256: $RECEIVED_SHA"
 [[ -n "$REQID" ]]         && echo "  Req ID:  $REQID"
 echo ""
 echo "================================================================"

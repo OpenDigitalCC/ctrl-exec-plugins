@@ -2,11 +2,15 @@
 # ce-file-transfer - Transfer files directly between two ctrl-exec agents
 #
 # Runs on the dispatcher host. Instructs the receiving agent to start
-# agent-file-receive, captures the cert fingerprint, then instructs the
-# sending agent to run agent-file-transfer pointing directly at the receiver.
+# agent-file-receive (which detaches its listener and returns the cert
+# fingerprint and a transfer id at once), then instructs the sending agent to
+# run agent-file-transfer pointing directly at the receiver, then confirms
+# receipt by calling agent-file-receive --status on the receiving agent.
 # No file data passes through the dispatcher host.
 #
 # Both agents must have their respective scripts installed and allowlisted.
+# The receiving agent's profile must let the receiver write the output
+# directory (it also holds the status file).
 # The transfer port must be reachable from the sender agent to the receiver
 # agent - configure firewall rules accordingly.
 #
@@ -121,25 +125,23 @@ api_status() {
     curl -s -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/${reqid}"
 }
 
-poll_stdout_field() {
-    local reqid="$1" field="$2" wait_limit="$3"
-    local value='' start
+# await_result <response> <reqid> <limit>
+# Print the run result: the /run response when it already carries one,
+# otherwise the /status record once it does. Non-zero on timeout.
+await_result() {
+    local resp="$1" reqid="$2" limit="$3" start now
     start=$(date +%s)
-    while [[ -z "$value" ]]; do
-        local status agent_stdout
-        status=$(api_status "$reqid" 2>/dev/null || echo '{}')
-        agent_stdout=$(echo "$status" | jq -r '.results[0].stdout // ""')
-        value=$(echo "$agent_stdout" | grep "^${field}:" \
-            | head -1 | sed "s/${field}://") || true
-        if [[ -z "$value" ]]; then
-            local now; now=$(date +%s)
-            if (( now - start > wait_limit )); then
-                return 1
-            fi
-            sleep 1
+    while :; do
+        if [[ -n "$(echo "$resp" | jq -r '.results[0].exit // empty' 2>/dev/null)" ]]; then
+            echo "$resp"
+            return 0
         fi
+        [[ -n "$reqid" ]] || return 1
+        now=$(date +%s)
+        (( now - start > limit )) && return 1
+        sleep 1
+        resp=$(api_status "$reqid" 2>/dev/null || echo '{}')
     done
-    echo "$value"
 }
 
 # ---------------------------------------------------------------------------
@@ -176,15 +178,31 @@ RECV_REQID=$(echo "$RECV_RESPONSE" | jq -r '.reqid // ""')
 echo "==> Receiver dispatched (reqid: $RECV_REQID)"
 
 # ---------------------------------------------------------------------------
-# Step 2: Wait for fingerprint from receiver agent
+# Step 2: Read fingerprint and transfer id from the receiver's stdout
 # ---------------------------------------------------------------------------
+
+# The receiver detaches its listener and exits at once, so the run result
+# carries both. If the API answered without a result yet, poll /status.
 
 echo "==> Waiting for receiver to be ready ..."
 
-FINGERPRINT=$(poll_stdout_field "$RECV_REQID" "fingerprint" 30) || {
+RECV_RESPONSE=$(await_result "$RECV_RESPONSE" "$RECV_REQID" 30) || {
     echo "Error: Timed out waiting for receiver fingerprint from $TO_HOST" >&2
     exit 1
 }
+
+RECV_EXIT=$(echo "$RECV_RESPONSE" | jq -r '.results[0].exit // ""')
+RECV_STDOUT=$(echo "$RECV_RESPONSE" | jq -r '.results[0].stdout // ""')
+FINGERPRINT=$(echo "$RECV_STDOUT" | grep '^fingerprint:' \
+    | head -1 | sed 's/fingerprint://') || true
+TRANSFER_ID=$(echo "$RECV_STDOUT" | grep '^id:' \
+    | head -1 | sed 's/id://') || true
+
+if [[ "$RECV_EXIT" != "0" || -z "$FINGERPRINT" || -z "$TRANSFER_ID" ]]; then
+    echo "Error: Receiver did not start on $TO_HOST (exit ${RECV_EXIT:-unknown})" >&2
+    echo "$RECV_RESPONSE" | jq -r '.results[0].stderr // ""' >&2
+    exit 1
+fi
 
 echo "==> Receiver ready. Fingerprint: $FINGERPRINT"
 
@@ -219,6 +237,10 @@ if [[ "$SEND_OK" != "true" ]]; then
 fi
 
 SEND_REQID=$(echo "$SEND_RESPONSE" | jq -r '.reqid // ""')
+SEND_RESPONSE=$(await_result "$SEND_RESPONSE" "$SEND_REQID" $(( TIMEOUT + 30 ))) || {
+    echo "Error: Timed out waiting for the sender result from $FROM_HOST" >&2
+    exit 1
+}
 SEND_EXIT=$(echo "$SEND_RESPONSE" | jq -r '.results[0].exit // -1')
 SEND_STDOUT=$(echo "$SEND_RESPONSE" | jq -r '.results[0].stdout // ""')
 SEND_STDERR=$(echo "$SEND_RESPONSE" | jq -r '.results[0].stderr // ""')
@@ -239,10 +261,50 @@ ARCHIVE_SIZE=$(echo "$SEND_STDOUT" | grep '^size:' | sed 's/size://') || true
 
 echo "==> Waiting for receiver to confirm ..."
 
-RECEIVED_SIZE=$(poll_stdout_field "$RECV_REQID" "received" 30) || {
-    echo "Warning: Could not confirm receipt from $TO_HOST" >&2
-    RECEIVED_SIZE=''
-}
+RECEIVED_SIZE=''
+RECEIVED_SHA=''
+CONFIRM_START=$(date +%s)
+CONFIRM_LIMIT=30
+
+STATUS_REQUEST=$(jq -n \
+    --arg host "$TO_HOST" \
+    --arg username "$USERNAME" \
+    --arg token "$TOKEN" \
+    --arg id "$TRANSFER_ID" \
+    --arg output "$OUTPUT" \
+    '{
+        hosts:    [$host],
+        script:   "agent-file-receive",
+        args:     ["--status", $id, "--output", $output],
+        username: $username,
+        token:    $token
+    }')
+
+while :; do
+    SRESP=$(api_run "$STATUS_REQUEST")
+    SREQID=$(echo "$SRESP" | jq -r '.reqid // ""' 2>/dev/null || true)
+    SRESP=$(await_result "$SRESP" "$SREQID" 10) || SRESP='{}'
+    S_EXIT=$(echo "$SRESP" | jq -r '.results[0].exit // ""')
+    S_STDOUT=$(echo "$SRESP" | jq -r '.results[0].stdout // ""')
+
+    if [[ "$S_EXIT" == "0" ]]; then
+        RECEIVED_SIZE=$(echo "$S_STDOUT" | grep '^received:' \
+            | head -1 | sed 's/received://') || true
+        RECEIVED_SHA=$(echo "$S_STDOUT" | grep '^sha256:' \
+            | head -1 | sed 's/sha256://') || true
+        [[ -n "$RECEIVED_SIZE" ]] && break
+    elif [[ -n "$S_EXIT" && "$S_EXIT" != "0" ]]; then
+        echo "Error: Receiver on $TO_HOST failed: ${S_STDOUT:-no status}" >&2
+        echo "$SRESP" | jq -r '.results[0].stderr // ""' >&2
+        exit 1
+    fi
+
+    if (( $(date +%s) - CONFIRM_START > CONFIRM_LIMIT )); then
+        echo "Warning: Could not confirm receipt from $TO_HOST" >&2
+        break
+    fi
+    sleep 1
+done
 
 # ---------------------------------------------------------------------------
 # Done
@@ -258,6 +320,7 @@ echo "  To:      $TO_HOST:$OUTPUT"
 echo "  Port:    $TRANSFER_PORT"
 [[ -n "$ARCHIVE_SIZE" ]]  && echo "  Sent:    ${ARCHIVE_SIZE} bytes"
 [[ -n "$RECEIVED_SIZE" ]] && echo "  Recvd:   ${RECEIVED_SIZE} bytes"
+[[ -n "$RECEIVED_SHA" ]]  && echo "  SHA-256: $RECEIVED_SHA"
 [[ -n "$SEND_REQID" ]]    && echo "  Send ID: $SEND_REQID"
 [[ -n "$RECV_REQID" ]]    && echo "  Recv ID: $RECV_REQID"
 echo ""
