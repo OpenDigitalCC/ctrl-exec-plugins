@@ -1,0 +1,31 @@
+{
+  "version": "1",
+  "description": "Restart docker compose services (docker compose -f <file> restart [service ...]), for example so they pick up a newly deployed certificate. With no services, the whole stack is restarted. Set test to true to check that the restart would work, changing nothing (uses docker compose --dry-run).",
+  "read_only": false,
+  "idempotent": true,
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "test": {
+        "type": "boolean",
+        "description": "Check docker access, the compose file and the services, and run the restart with --dry-run. Restarts nothing.",
+        "default": false
+      },
+      "compose_file": {
+        "type": "string",
+        "description": "Absolute path of the compose file. A stack split over several files is given as one value joined with ':' (as in COMPOSE_FILE); each is passed with its own -f, in order."
+      },
+      "services": {
+        "type": "array",
+        "description": "Service names to restart. Omit to restart the whole stack.",
+        "items": { "type": "string" }
+      }
+    },
+    "required": ["compose_file"]
+  },
+  "argv": [
+    { "arg": "test", "flag": "--test" },
+    { "arg": "compose_file" },
+    { "arg": "services", "repeat": true }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "version": "1",
+  "description": "Write a certificate, private key and CA chain into a folder on this host, in the 'named' layout (<basename>.crt/.key/.ca/.fullchain.crt) or the 'pem' layout (fullchain.pem + privkey.pem). Files are mode 640, the folder 750, optionally group-owned. Overwrites existing files in place. Set test to true to check that a deploy would work, changing nothing. The key_b64 argument is a PRIVATE KEY.",
+  "read_only": false,
+  "idempotent": true,
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "test": {
+        "type": "boolean",
+        "description": "Check that a deploy would work and change nothing. When true, cert_b64, key_b64 and ca_b64 are not used.",
+        "default": false
+      },
+      "target_dir": {
+        "type": "string",
+        "description": "Absolute path of the folder to write into. Created if missing. Must not contain '..'."
+      },
+      "basename": {
+        "type": "string",
+        "description": "File name stem, usually the domain (example.com). Used by the 'named' layout; ignored in file names by 'pem'."
+      },
+      "group": {
+        "type": "string",
+        "description": "Group (name or numeric gid) to own the folder and files, so a service in that group can read the key. '-' leaves the group unchanged. For a container, the gid of the service user inside the container."
+      },
+      "cert_b64": {
+        "type": "string",
+        "description": "Base64 of the PEM certificate. Required unless test is true."
+      },
+      "key_b64": {
+        "type": "string",
+        "description": "SECRET: base64 of the PEM PRIVATE KEY. Required unless test is true. Visible in the process table while the script runs; handle as a secret."
+      },
+      "ca_b64": {
+        "type": "string",
+        "description": "Base64 of the PEM CA chain. Required unless test is true."
+      },
+      "layout": {
+        "type": "string",
+        "description": "File layout to write.",
+        "enum": ["named", "pem"],
+        "default": "named"
+      }
+    },
+    "required": ["target_dir", "basename", "group"]
+  },
+  "argv": [
+    { "arg": "test", "flag": "--test" },
+    { "arg": "target_dir" },
+    { "arg": "basename" },
+    { "arg": "group" },
+    { "arg": "cert_b64" },
+    { "arg": "key_b64" },
+    { "arg": "ca_b64" },
+    { "arg": "layout" }
+  ]
+}

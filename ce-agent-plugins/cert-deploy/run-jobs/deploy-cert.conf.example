@@ -1,0 +1,69 @@
+# deploy-cert.conf - certificate issue and deploy (deploy-cert.sh)
+#
+# Copy to deploy-cert.conf next to deploy-cert.sh. One key per line, in any
+# order. Comments go on their own line only: a '#' after a value becomes part
+# of the value.
+#
+# Keys:
+#   schedule    = <cron expression>       when run-jobs runs the job
+#   agent       = <issuing-agent>         the agent that issues certificates
+#   certificate = <domain> [wildcard]     a certificate to issue
+#   target      = <name> <agent> <dir> <group|-> [named|pem]
+#                                         one destination: an agent, a folder
+#                                         on it, the group for the files, and
+#                                         the file layout
+#   deploy      = <domain> <target-name>  send that certificate to that target
+#   restart     = <target-name> <compose-file> [service ...]
+#                                         restart these services afterwards
+#   verify      = <target-name> <name> <[address:]port> [starttls-protocol]
+#                                         check what the service serves
+#
+# Layouts: named (the default) writes <domain>.crt .key .ca .fullchain.crt;
+# pem writes fullchain.pem + privkey.pem only, for services that expect
+# those names in a folder of their own.
+#
+# For a service in a container, the group is the numeric gid of its user
+# INSIDE the container (docker exec <container> id <user>), not a host group
+# of the same name.
+#
+# restart and verify run only for a target that received a certificate in
+# the run. verify's <name> is the host name clients use (a wildcard covers
+# one label under its domain); the port is on localhost unless an address is
+# given. Several compose files for restart are joined with ':'.
+
+schedule    = 0 3 * * 0
+
+# Issued weekly through the issuing agent (90-day certificates)
+agent       = issuer-01.example.com
+certificate = example.com wildcard
+certificate = example.org wildcard
+
+
+# ---------------------------------------------------------------------------
+# web-01.example.com
+# ---------------------------------------------------------------------------
+
+# --- web front end (named layout) ------------------------------------------
+# nginx reads /srv/web/certs/example.com.fullchain.crt and .key. The nginx
+# user's gid inside its container is 101. Clients connect on 443.
+target    = web web-01.example.com /srv/web/certs 101
+deploy    = example.com web
+restart   = web /srv/web/compose.yml nginx
+verify    = web www.example.com 443
+
+
+# ---------------------------------------------------------------------------
+# idp-01.example.com
+# ---------------------------------------------------------------------------
+
+# --- identity provider (pem layout) ----------------------------------------
+# An identity provider (for example Authentik) imports certs/directory/ as a
+# key pair from fullchain.pem + privkey.pem. The worker runs as uid/gid 1000
+# in its container. The worker and the LDAP outpost are restarted together
+# (two compose files joined with ':') so the outpost serves the new key pair
+# at once. The outpost serves LDAPS on 192.0.2.10:636, so the check connects
+# there with the name clients use rather than resolving it.
+target    = directory idp-01.example.com /srv/idp/certs/directory 1000 pem
+deploy    = example.org directory
+restart   = directory /srv/idp/compose.yml:/srv/idp/compose.outpost.yml worker ldap
+verify    = directory ldap.example.org 192.0.2.10:636
