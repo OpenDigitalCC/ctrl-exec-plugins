@@ -113,7 +113,8 @@ Run an allowlisted script on one or more agents in parallel. `--script` is
 required. Everything after `--` is passed to the script as positional arguments.
 
 ```
-ctrl-exec-cli run <host> [host...] --script <n> [--async] [--json] [-- arg...]
+ctrl-exec-cli run <host> [host...] --script <n> [--async] [--json]
+    [--input FILE|- | --input-fields FILE|-] [-- arg...]
 ```
 
 Without `--async`, the command blocks until all hosts complete. stdout from
@@ -127,6 +128,35 @@ bound by the API read timeout. Per-host acceptance (`accepted` / `busy` /
 `error`) is printed to stderr and the bare reqid to stdout (so
 `REQID=$(... --async)` captures just the id). Retrieve the result later with
 `status`, or block until it finishes with `wait`.
+
+#### Confidential input
+
+Arguments are visible in `ps`, shell history and logs. To give a script data
+that must stay confidential (a key, a password, a certificate), use input:
+
+- `--input FILE|-` reads FILE (or stdin for `-`) and sends its content as the
+  single field `input`.
+- `--input-fields FILE|-` reads a JSON object of string fields (at most 32;
+  names 1-64 characters of `A-Z a-z 0-9 _ . -`) and sends it as given.
+
+The two are mutually exclusive, and only one source may be stdin. Input is read
+only from a file or stdin - there is no `--input=VALUE` form, by design. The
+request body carries it as `input`; the receiving agent's `scripts.conf`
+`input=` setting decides how the script gets it (stdin, or files under
+`$CTRL_EXEC_INPUT`). The CLI never prints, logs or echoes input values: error
+messages name the option or field only.
+
+The content must be valid UTF-8 text because the API carries JSON strings. The
+CLI refuses anything else; base64-encode binary content first
+(`base64 key.der | ctrl-exec-cli run ... --input -`). If the API rejects the
+input (HTTP 400), its message is shown. Send input only over a trusted path
+(loopback, or TLS): over plain HTTP to another host it crosses the network
+unencrypted.
+
+```
+ctrl-exec-cli run web-01 --script set-secret --input secret.txt
+ctrl-exec-cli run web-01 --script deploy-cert --input-fields - < fields.json
+```
 
 ### status
 

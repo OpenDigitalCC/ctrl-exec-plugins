@@ -5,6 +5,8 @@ use warnings;
 use Getopt::Long qw(GetOptionsFromArray);
 use HTTP::Tiny   ();
 use JSON::PP     qw(encode_json decode_json);
+use Encode       ();
+use B            ();
 
 our $VERSION = '0.1.0';
 
@@ -171,7 +173,9 @@ sub cmd_run {
 
     my %opts;
     GetOptionsFromArray(\@before_sep,
-        'script=s' => \$opts{script},
+        'script=s'       => \$opts{script},
+        'input=s'        => \$opts{input},
+        'input-fields=s' => \$opts{input_fields},
         'async'    => \$opts{async},
         'json'     => \$opts{json},
         'help|h'   => \$opts{help},
@@ -183,7 +187,16 @@ sub cmd_run {
     # Remaining elements after option parsing are hosts
     my @hosts = @before_sep;
 
+    # Input is only ever read from a file or stdin, never from the command
+    # line (it would show in ps and shell history). Refuse look-alike options.
+    for my $h (@hosts) {
+        die "Error: input is not accepted on the command line; use --input FILE|-"
+            . " or --input-fields FILE|-\n" if $h =~ /^--input/;
+    }
+
     die usage_run() unless @hosts && $opts{script};
+
+    my $input = load_input($opts{input}, $opts{input_fields});
 
     my %body = (
         hosts    => \@hosts,
@@ -195,6 +208,7 @@ sub cmd_run {
     # True async: the server returns 202 immediately and the agent runs the
     # script detached, so a long job is not bound by the API read timeout.
     $body{async} = JSON::PP::true if $opts{async};
+    $body{input} = $input if $input;
 
     my $data = api_post($ctx, '/run', \%body);
 
@@ -266,6 +280,91 @@ sub cmd_run {
     }
 
     exit 1 if $any_fail;
+}
+
+# Confidential run input (T-013). Returns undef when neither option is given,
+# else the hashref to send as the request's `input`. Values are never put in a
+# message here: errors name the option and the field, not the content.
+sub load_input {
+    my ($file, $fields_file) = @_;
+
+    return undef unless defined $file || defined $fields_file;
+
+    die "Error: --input and --input-fields are mutually exclusive\n"
+        if defined $file && defined $fields_file;
+
+    if (defined $file) {
+        my $text = _read_input_text($file, '--input');
+        return { input => $text };
+    }
+
+    my $text = _read_input_text($fields_file, '--input-fields');
+    my $obj  = eval { decode_json(Encode::encode('UTF-8', $text)) };
+    if ($@) {
+        # JSON::PP quotes the text near the fault; report only the offset.
+        my $at = $@ =~ /at character offset (\d+)/ ? " (at character $1)" : '';
+        die "Error: --input-fields is not valid JSON$at\n";
+    }
+    die "Error: --input-fields must be a JSON object of string fields\n"
+        unless ref $obj eq 'HASH';
+    my @names = sort keys %$obj;
+    die "Error: --input-fields has no fields\n" unless @names;
+    die "Error: --input-fields has " . scalar(@names)
+        . " fields; at most 32 are allowed\n" if @names > 32;
+    for my $n (@names) {
+        die "Error: --input-fields has an invalid field name (names are 1-64 of"
+            . " A-Z a-z 0-9 _ . -): '" . _safe_name($n) . "'\n"
+            unless $n =~ /\A[A-Za-z0-9_.-]{1,64}\z/;
+    }
+    for my $n (@names) {
+        die "Error: --input-fields field '$n' is not a string\n"
+            unless _is_json_string($obj->{$n});
+    }
+    return $obj;
+}
+
+# A bad name may itself be sensitive junk; show a short, printable form only.
+sub _safe_name {
+    my ($n) = @_;
+    my $s = substr($n, 0, 20);
+    $s =~ s/[^\x20-\x7e]/?/g;
+    $s .= '...' if length($n) > 20;
+    return $s;
+}
+
+# True for a decoded JSON string; false for numbers, booleans, null, arrays
+# and objects. JSON::PP returns numbers as numeric scalars (no POK flag).
+sub _is_json_string {
+    my ($v) = @_;
+    return 0 if !defined $v || ref $v;
+    my $f = B::svref_2object(\$v)->FLAGS;
+    return 0 if ($f & (B::SVp_IOK() | B::SVp_NOK())) && !($f & B::SVp_POK());
+    return 1;
+}
+
+# Read FILE (or stdin for "-") and return it as characters. The wire is JSON
+# strings, so the content must be valid UTF-8 text; binary is refused.
+sub _read_input_text {
+    my ($file, $opt) = @_;
+    my $bytes;
+    if ($file eq '-') {
+        local $/;
+        binmode STDIN;
+        $bytes = <STDIN>;
+    }
+    else {
+        open my $fh, '<:raw', $file
+            or die "Error: $opt: cannot read '$file': $!\n";
+        local $/;
+        $bytes = <$fh>;
+        close $fh;
+    }
+    $bytes //= '';
+    my $text = eval { Encode::decode('UTF-8', $bytes, Encode::FB_CROAK()) };
+    die "Error: $opt input is not valid UTF-8 text; the API carries JSON"
+        . " strings, so base64-encode binary content first (e.g. base64 FILE)\n"
+        unless defined $text;
+    return $text;
 }
 
 sub cmd_status {
@@ -688,13 +787,27 @@ END
 }
 
 sub usage_run { return <<'END';
-Usage: ctrl-exec-cli run [--async] [--json] <host> [host...] --script <n> [-- arg...]
+Usage: ctrl-exec-cli run [--async] [--json] [--input FILE|- | --input-fields FILE|-]
+                         <host> [host...] --script <n> [-- arg...]
 
   <host>           One or more agent hostnames (hostname or hostname:port)
   --script <n>  Allowlisted script name (required)
   --async          Submit and print reqid immediately; do not wait for results
   --json           Raw JSON output
+  --input FILE|-   Confidential input: send the content of FILE (or stdin for -)
+                   as the one field "input". Must be UTF-8 text.
+  --input-fields FILE|-
+                   Confidential input: FILE (or stdin for -) holds a JSON
+                   object of string fields, sent as given. At most 32 fields,
+                   names 1-64 of A-Z a-z 0-9 _ . -
   --               Everything after -- is passed to the script as arguments
+
+--input and --input-fields are mutually exclusive, and only one source may be
+stdin. Input is never taken from the command line (it would show in ps and
+shell history). It is delivered to the script as the receiving agent's
+scripts.conf input= setting decides, and is never logged or stored. Binary
+content must be base64-encoded first. Input should only travel over a trusted
+network path (loopback, or TLS).
 
 Without --async, blocks until all hosts complete and prints full results.
 With --async, the server returns immediately and the agent runs the script
@@ -711,6 +824,8 @@ Examples:
   ctrl-exec-cli run db-01 db-02 --script backup-mysql -- --database myapp
   ctrl-exec-cli run web-01 web-02 --script check-disk --json
   ctrl-exec-cli run db-01 --script pg-vacuum -- --full --analyse
+  ctrl-exec-cli run db-01 --script set-secret --input secret.txt
+  ctrl-exec-cli run web-01 --script deploy-cert --input-fields - < fields.json
   ctrl-exec-cli run db-01 --script long-job --async
   REQID=\$(ctrl-exec-cli run db-01 --script long-job --async)
   ctrl-exec-cli status \$REQID
