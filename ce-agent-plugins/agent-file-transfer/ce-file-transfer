@@ -117,7 +117,8 @@ api_run() {
 
 api_status() {
     local reqid="$1"
-    curl -s "${API_URL}/status/${reqid}"
+    # The API reads the status token from the Authorization header, not the body.
+    curl -s -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/${reqid}"
 }
 
 poll_stdout_field() {

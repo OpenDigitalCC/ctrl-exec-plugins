@@ -163,7 +163,7 @@ WAIT_START=$(date +%s)
 WAIT_LIMIT=30
 
 while [[ -z "$FINGERPRINT" ]]; do
-    STATUS=$(curl -s "${API_URL}/status/${REQID}" 2>/dev/null || echo '{}')
+    STATUS=$(curl -s -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/${REQID}" 2>/dev/null || echo '{}')
     STATUS_OK=$(echo "$STATUS" | jq -r '.ok' 2>/dev/null || echo "false")
 
     if [[ "$STATUS_OK" == "true" ]]; then
@@ -237,7 +237,7 @@ CONFIRM_START=$(date +%s)
 CONFIRM_LIMIT=30
 
 while [[ -z "$RECEIVED_SIZE" ]]; do
-    STATUS=$(curl -s "${API_URL}/status/${REQID}" 2>/dev/null || echo '{}')
+    STATUS=$(curl -s -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/${REQID}" 2>/dev/null || echo '{}')
     AGENT_EXIT=$(echo "$STATUS" | jq -r '.results[0].exit // ""')
 
     if [[ "$AGENT_EXIT" == "0" ]]; then

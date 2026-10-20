@@ -50,6 +50,31 @@ for c in ce-file-transfer ce-push-blob; do
   "$DIR/$c" </dev/null >/dev/null 2>&1; ok "$c no args -> nonzero (usage)" nonzero "$([ $? -ne 0 ] && echo nonzero || echo zero)"
 done
 
+# --- status polls carry the token (auth-checking stub API) -----------------
+# test/stub-api.py answers GET /status with 404 unless Authorization: Bearer
+# <token> matches, as the real API does when the auth hook refuses the token.
+if command -v python3 >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  W="$(mktemp -d)"; trap 'kill "${STUB:-}" 2>/dev/null; rm -rf "$W"' EXIT
+  python3 "$DIR/test/stub-api.py" sekrit "$W/port" "$W/log" & STUB=$!
+  for _ in $(seq 1 100); do [ -s "$W/port" ] && break; sleep 0.1; done
+  API="http://127.0.0.1:$(cat "$W/port" 2>/dev/null)"
+  : > "$W/log"
+  out="$(CTRL_EXEC_API_URL=$API CTRL_EXEC_TOKEN=sekrit timeout 15 "$DIR/ce-push-blob" \
+      --host h --file "$DIR/test/run.sh" --output /x --port 1 2>&1)"
+  case "$out" in *"Agent receiver ready. Fingerprint: AA:BB:CC"*) r=ready;; *) r=stalled;; esac
+  ok "ce-push-blob fingerprint poll sends the Bearer token" ready "$r"
+  : > "$W/log"
+  out="$(CTRL_EXEC_API_URL=$API CTRL_EXEC_TOKEN=sekrit timeout 15 "$DIR/ce-file-transfer" \
+      --from a --to b --path /p --output /o --port 1 2>&1)"
+  case "$out" in *"Transfer complete"*"Recvd:   5 bytes"*) r=complete;; *) r=stalled;; esac
+  ok "ce-file-transfer polls send the Bearer token (completes)" complete "$r"
+  bare="$(grep -c 'auth=\[\]' "$W/log" || true)"
+  ok "ce-file-transfer sends no tokenless status poll" 0 "$bare"
+  kill "$STUB" 2>/dev/null; wait "$STUB" 2>/dev/null
+else
+  echo "  SKIP  python3/curl/jq unavailable - status-token checks skipped"
+fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] && echo "VERDICT: PASS" || echo "VERDICT: FAIL"

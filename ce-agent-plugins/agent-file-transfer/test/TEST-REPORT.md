@@ -1,5 +1,5 @@
 # Test report: agent-file-transfer (ce-agent-plugins)
-Generated: 2026-06-12T05:38:49Z
+Generated: 2026-10-20T13:44:53Z
 
   PASS  no args -> exit 2 (--port required)
   PASS  missing --output -> exit 2
@@ -10,6 +10,9 @@ Generated: 2026-06-12T05:38:49Z
   PASS  schema marks the receiver destructive
   PASS  ce-file-transfer no args -> nonzero (usage)
   PASS  ce-push-blob no args -> nonzero (usage)
+  PASS  ce-push-blob fingerprint poll sends the Bearer token
+  PASS  ce-file-transfer polls send the Bearer token (completes)
+  PASS  ce-file-transfer sends no tokenless status poll
 
-Results: 9 passed, 0 failed
+Results: 12 passed, 0 failed
 VERDICT: PASS
