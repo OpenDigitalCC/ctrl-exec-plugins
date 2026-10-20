@@ -683,16 +683,19 @@ sub _unix_request {
     local $SIG{PIPE} = 'IGNORE';
     print {$s} $head, $content
         or return { status => 599, content => "write to socket $path_sock failed: $!" };
+    # Same rule as HTTP::Tiny's timeout above: give up after 120 s with
+    # nothing to read, so a stalled server cannot hang the CLI.
+    require IO::Select;
+    my $sel  = IO::Select->new($s);
     my $resp = '';
-    my $deadline = time + 120;
     while (1) {
+        return { status => 599, content => "timed out reading from socket $path_sock" }
+            unless $sel->can_read(120);
         my $n = sysread($s, my $buf, 65536);
         return { status => 599, content => "read from socket $path_sock failed: $!" }
             unless defined $n;
         last if $n == 0;
         $resp .= $buf;
-        return { status => 599, content => "timed out reading from socket $path_sock" }
-            if time > $deadline;
     }
     close $s;
     my ($status) = $resp =~ m{\AHTTP/\d\.\d\s+(\d{3})};
