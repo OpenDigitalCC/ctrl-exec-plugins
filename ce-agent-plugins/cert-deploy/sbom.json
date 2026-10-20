@@ -1,0 +1,88 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "cert-deploy",
+      "version": "0.1.0",
+      "description": "Issue a certificate on one ctrl-exec agent, deploy it to many, restart the services and verify what they serve"
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "agent-cert-deploy",
+      "version": "0.1.0",
+      "description": "Agent script: writes a certificate, key and CA chain into a folder (named or pem layout)"
+    },
+    {
+      "type": "application",
+      "name": "agent-service-restart",
+      "version": "0.1.0",
+      "description": "Agent script: restarts docker compose services"
+    },
+    {
+      "type": "application",
+      "name": "agent-cert-check",
+      "version": "0.1.0",
+      "description": "Agent script: checks the TLS certificate a service is serving, Nagios style"
+    },
+    {
+      "type": "application",
+      "name": "deploy-cert",
+      "version": "0.1.0",
+      "description": "Dispatcher-side run-jobs job: issues, deploys, restarts and verifies"
+    },
+    {
+      "type": "library",
+      "name": "bash",
+      "version": "5.2",
+      "description": "GNU Bourne Again shell",
+      "purl": "pkg:deb/debian/bash"
+    },
+    {
+      "type": "library",
+      "name": "coreutils",
+      "version": "9.1",
+      "description": "Provides base64, chgrp, chmod, stat, mkdir and timeout",
+      "purl": "pkg:deb/debian/coreutils"
+    },
+    {
+      "type": "library",
+      "name": "libc-bin",
+      "version": "2.36",
+      "description": "Provides getent(1) for group lookup in agent-cert-deploy --test",
+      "purl": "pkg:deb/debian/libc-bin"
+    },
+    {
+      "type": "library",
+      "name": "openssl",
+      "version": "3.0",
+      "description": "Provides openssl s_client and x509 for agent-cert-check",
+      "purl": "pkg:deb/debian/openssl"
+    },
+    {
+      "type": "library",
+      "name": "docker-compose-v2",
+      "version": "2.17",
+      "description": "docker compose v2 (v2.17 or later for --test dry-run), used by agent-service-restart",
+      "purl": "pkg:deb/debian/docker-compose-v2"
+    },
+    {
+      "type": "library",
+      "name": "jq",
+      "version": "1.6",
+      "description": "Parses ctrl-exec-cli JSON responses in deploy-cert.sh",
+      "purl": "pkg:deb/debian/jq"
+    },
+    {
+      "type": "library",
+      "name": "perl-base",
+      "version": "5.36",
+      "description": "Core modules (MIME::Base64, Digest::SHA) compute the certificate fingerprint in deploy-cert.sh",
+      "purl": "pkg:deb/debian/perl-base"
+    }
+  ]
+}
