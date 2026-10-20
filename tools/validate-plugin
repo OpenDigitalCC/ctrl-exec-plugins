@@ -175,17 +175,15 @@ main() {
 validate_agent_script() {
     local plugin_path="$1" plugin_name="$2"
 
-    # Locate the script file - must be the only .sh file, or named after plugin
-    local script_file=""
+    # Locate the agent script(s): the one named after the plugin if present,
+    # otherwise every .sh at the plugin root (a plugin may ship several agent
+    # scripts that work together; each must pass on its own). Helpers that are
+    # not agent scripts belong in a subfolder (test/, run-jobs/, ...).
+    local script_files=()
     if [[ -f "$plugin_path/${plugin_name}.sh" ]]; then
-        script_file="$plugin_path/${plugin_name}.sh"
+        script_files=("$plugin_path/${plugin_name}.sh")
     else
-        # Fall back to any single .sh file
-        local sh_files
-        mapfile -t sh_files < <(find "$plugin_path" -maxdepth 1 -name "*.sh" 2>/dev/null)
-        if [[ ${#sh_files[@]} -eq 1 ]]; then
-            script_file="${sh_files[0]}"
-        fi
+        mapfile -t script_files < <(find "$plugin_path" -maxdepth 1 -name "*.sh" 2>/dev/null | sort)
     fi
 
     echo "[ Agent script ]"
@@ -198,11 +196,28 @@ validate_agent_script() {
         return
     fi
 
-    if [[ -z "$script_file" ]]; then
-        fail "No script file found (expected ${plugin_name}.sh or single .sh file)"
+    if [[ ${#script_files[@]} -eq 0 ]]; then
+        fail "No script file found (expected ${plugin_name}.sh or .sh files at the plugin root)"
         echo ""
         return
     fi
+
+    if [[ ${#script_files[@]} -gt 1 ]]; then
+        pass "Plugin has ${#script_files[@]} agent scripts; validating each"
+        echo ""
+    fi
+
+    local script_file
+    for script_file in "${script_files[@]}"; do
+        [[ ${#script_files[@]} -gt 1 ]] && echo "[ Agent script: $(basename "$script_file") ]"
+        validate_one_agent_script "$plugin_path" "$script_file"
+    done
+}
+
+# The checks for one agent script: found, shebang, executable, allowlist-safe
+# name, README mentions scripts.conf, and no-args usage exit.
+validate_one_agent_script() {
+    local plugin_path="$1" script_file="$2"
 
     local script_basename
     script_basename="$(basename "$script_file")"

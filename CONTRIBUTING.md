@@ -242,7 +242,11 @@ The validator checks:
 - Required README headings present for the category
 - `sbom.json` is valid JSON with required CycloneDX fields
 - For agent scripts: script is executable, has a shebang, name matches the
-  allowlist pattern, exits non-zero with output when called with no args
+  allowlist pattern, exits non-zero with output when called with no args.
+  The script is `<plugin-name>.sh` if present; otherwise every `.sh` at the
+  plugin root is an agent script and each is checked, so a plugin can ship
+  several that work together. Keep other `.sh` files (tests, jobs) in a
+  subfolder.
 - For auth hooks: hook is executable, has a shebang, exits with a valid
   code (0–3) on empty stdin and on a synthetic ping payload
 
