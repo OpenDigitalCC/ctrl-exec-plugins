@@ -138,6 +138,20 @@ ctrl-exec-cli run <host> [host...] --script <n> [--async] [--json]
     [--input FILE|- | --input-fields FILE|-] [-- arg...]
 ```
 
+Every bare word before `--` is a host, so script arguments must come after
+`--`: `ctrl-exec-cli run web-01 --script deploy -- /srv/app users`. If the API
+reports an unknown agent and one of the unknown names looks like an argument
+(contains `/`, `=` or whitespace, starts with `-`, or came after `--script`),
+the error is followed by the hint `script arguments go after --`. Hosts after
+`--script` still work.
+
+Any subcommand refuses an argument containing a non-ASCII space character
+(for example a non-breaking space U+00A0, U+202F, U+3000, or a zero-width
+U+200B / U+FEFF). These usually arrive through copy-paste and glue words the
+shell should have split, so `--<NBSP>--test` is one argument and `--` is never
+seen. The CLI exits 2 before sending anything, showing the argument with the
+character as `<U+00A0>`; retype the spaces. Other UTF-8 text is unaffected.
+
 Without `--async`, the command blocks until all hosts complete. stdout from
 the script is printed to stdout; stderr to stderr. The top-level reqid is
 printed as a header for log correlation. Exit code is 0 if all hosts

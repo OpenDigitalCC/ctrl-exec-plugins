@@ -31,6 +31,8 @@ main() unless caller;
 sub main {
     my %global;
 
+    check_argv_whitespace(\@ARGV);
+
     Getopt::Long::Configure('pass_through', 'no_auto_abbrev');
     GetOptionsFromArray(
         \@ARGV,
@@ -178,6 +180,17 @@ sub cmd_run {
     }
     @before_sep = @args unless $found_sep;
 
+    # Words after --script NAME (before any --): if the API reports one as an
+    # unknown agent, the likely mistake is a missing -- (T-049).
+    my %after_script;
+    for my $i (0 .. $#before_sep) {
+        my $skip = $before_sep[$i] eq '--script'      ? 2
+                 : $before_sep[$i] =~ /^--script=/    ? 1 : 0;
+        next unless $skip;
+        $after_script{$_} = 1 for grep { !/^-/ } @before_sep[$i + $skip .. $#before_sep];
+        last;
+    }
+
     my %opts;
     GetOptionsFromArray(\@before_sep,
         'script=s'       => \$opts{script},
@@ -228,7 +241,7 @@ sub cmd_run {
             die "Lock conflict - script already running on: "
                 . join(', ', @conflicts) . "\n";
         }
-        die_error($data);
+        die_error($data, run_hint($data, \%after_script));
     }
 
     # --async: report per-host acceptance and the reqid, then exit.
@@ -808,10 +821,47 @@ sub build_context {
 # ---------------------------------------------------------------------------
 
 sub die_error {
-    my ($data) = @_;
+    my ($data, $hint) = @_;
     my $msg = $data->{error} // 'unknown error';
     $msg .= ": $data->{detail}" if $data->{detail};
+    $msg .= "\n$hint" if $hint;
     die "Error: $msg\n";
+}
+
+# T-049: the API answers an unknown agent with error "unknown agent" and detail
+# "not a registered agent: a, b, c" (Exec::API::_resolve_or_404). When a listed
+# name cannot be a hostname, or followed --script on the command line, the
+# script's arguments were probably given without --.
+sub run_hint {
+    my ($data, $after) = @_;
+    return '' unless ($data->{error} // '') eq 'unknown agent';
+    (my $list = $data->{detail} // '') =~ s/^not a registered agent:\s*//;
+    for my $n (split /,\s*/, $list) {
+        next unless length $n;
+        return 'Hint: script arguments go after --: '
+            . 'ctrl-exec-cli run <hosts> --script <name> -- <args>'
+            if $n =~ m{[/=\s]} || $n =~ /^-/ || $after->{$n};
+    }
+    return '';
+}
+
+# Non-ASCII whitespace (usually a non-breaking space from copy-paste) joins
+# words the shell should have split. Refuse before anything is sent.
+sub check_argv_whitespace {
+    my ($argv) = @_;
+    my $re = qr/[\p{Space}\x{200B}\x{FEFF}]/;
+    for my $raw (@$argv) {
+        my $txt = eval { Encode::decode('UTF-8', $raw, Encode::FB_CROAK() | Encode::LEAVE_SRC()) };
+        next unless defined $txt;
+        next unless grep { ord($_) > 127 && $_ =~ $re } split //, $txt;
+        my $shown = join '', map {
+            ord($_) > 127 && $_ =~ $re ? sprintf('<U+%04X>', ord $_) : $_
+        } split //, $txt;
+        print STDERR Encode::encode('UTF-8',
+            "Error: argument '$shown' contains a non-ASCII space character.\n"
+          . "It probably came from copy-paste; retype the spaces.\n");
+        exit 2;
+    }
 }
 
 # ---------------------------------------------------------------------------

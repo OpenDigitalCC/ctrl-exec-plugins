@@ -1,11 +1,12 @@
 # Test report: ctrl-exec-cli (ce-api-plugins)
-Generated: 2026-10-21T05:06:54Z
+Generated: 2026-10-21T05:24:10Z
 
 test/cli.t ........ ok
+test/hint.t ....... ok
 test/input.t ...... ok
 test/transport.t .. ok
 All tests successful.
-Files=3, Tests=157,  3 wallclock secs ( 0.04 usr  0.01 sys +  2.28 cusr  0.81 csys =  3.14 CPU)
+Files=4, Tests=178,  3 wallclock secs ( 0.03 usr  0.01 sys +  2.35 cusr  0.73 csys =  3.12 CPU)
 Result: PASS
 
 1..32
