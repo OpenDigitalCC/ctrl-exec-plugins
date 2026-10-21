@@ -186,10 +186,17 @@ CLI refuses anything else; base64-encode binary content first
 (`base64 key.der | ctrl-exec-cli run ... --input -`). If the API rejects the
 input (HTTP 400), its message is shown. Send input only over the API's unix
 socket (`--socket`) or TLS (an `https://` URL verified with `--ca`): over plain
-HTTP to another host it crosses the network unencrypted. The CLI prints a
-warning to stderr (and still sends) when `--input` or `--input-fields` would go
+HTTP to another host it crosses the network unencrypted. The CLI logs a
+warning (and still sends) when `--input` or `--input-fields` would go
 over plain HTTP to an address that is not loopback (`localhost`, `127.x.x.x`,
 `::1`).
+
+**Where warnings go.** The CLI never prints a warning into output a script
+might parse (a job capturing `2>&1` must get clean JSON). Warnings are sent to
+syslog (ident `ctrl-exec-cli`, facility `user`, priority `warning`) and are also
+shown on stderr only when stderr is a terminal. Where there is no syslog socket
+(`/dev/log`, absent in some containers) the log copy is silently skipped. Errors
+(which make the CLI exit non-zero) stay on stderr.
 
 ```
 ctrl-exec-cli run web-01 --script set-secret --input secret.txt

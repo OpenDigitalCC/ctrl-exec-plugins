@@ -7,6 +7,7 @@ use HTTP::Tiny   ();
 use JSON::PP     qw(encode_json decode_json);
 use Encode       ();
 use B            ();
+use Sys::Syslog  ();
 
 our $VERSION = '0.1.0';
 
@@ -723,8 +724,8 @@ sub _unix_request {
     return { status => $status, content => $body // '' };
 }
 
-# Confidential input should only travel over the unix socket or TLS. Warn (on
-# stderr, without stopping) when it is about to go over plain HTTP to an
+# Confidential input should only travel over the unix socket or TLS. Warn (to
+# the log, and to stderr only on a terminal; without stopping) when it is about to go over plain HTTP to an
 # address that is not loopback, where anyone on the path could read it.
 sub warn_plain_input {
     my ($ctx) = @_;
@@ -734,9 +735,39 @@ sub warn_plain_input {
     $host = lc($host // '');
     $host =~ s/\A\[(.*)\]\z/$1/;
     return if _is_loopback($host);
-    print STDERR "Warning: sending confidential input over plain HTTP to '$host';"
+    cli_warn("Warning: sending confidential input over plain HTTP to '$host';"
         . " anyone on the network path can read it. Use --socket PATH, or an"
-        . " https:// --url with --ca FILE.\n";
+        . " https:// --url with --ca FILE.\n");
+}
+
+# Warnings never go into output a script parses (a job capturing 2>&1 must get
+# clean JSON): they go to syslog (ident ctrl-exec-cli, facility user, priority
+# warning) and, only when stderr is a terminal, to stderr as well. With no
+# syslog socket (some containers) the log leg is silently skipped. Errors are
+# not warnings and stay on stderr. CTRL_EXEC_CLI_SYSLOG_SOCKET points the log
+# at another unix socket (used by the tests).
+sub cli_warn {
+    my ($msg) = @_;
+    log_warning($msg);
+    print STDERR $msg if warn_to_stderr();
+}
+
+sub warn_to_stderr { return -t STDERR ? 1 : 0 }
+
+sub log_warning {
+    my ($msg) = @_;
+    (my $line = $msg) =~ s/\s+\z//;
+    my $path = $ENV{CTRL_EXEC_CLI_SYSLOG_SOCKET} // '/dev/log';
+    return unless -S $path;
+    local $SIG{__WARN__} = sub { };
+    local $SIG{PIPE}   = 'IGNORE';
+    eval {
+        Sys::Syslog::setlogsock({ type => 'unix', path => $path }) or die;
+        Sys::Syslog::openlog('ctrl-exec-cli', 'pid', 'user');
+        Sys::Syslog::syslog('warning', '%s', $line);
+        Sys::Syslog::closelog();
+        1;
+    };
 }
 
 sub _is_loopback {
@@ -964,8 +995,8 @@ shell history). It is delivered to the script as the receiving agent's
 scripts.conf input= setting decides, and is never logged or stored. Binary
 content must be base64-encoded first. Input should only travel over the API's
 unix socket (--socket) or TLS (an https:// --url, verified with --ca); a
-warning is printed to stderr when it would go over plain HTTP to an address
-that is not loopback.
+warning is logged (and shown on stderr only when stderr is a terminal) when it
+would go over plain HTTP to an address that is not loopback.
 
 Without --async, blocks until all hosts complete and prints full results.
 With --async, the server returns immediately and the agent runs the script

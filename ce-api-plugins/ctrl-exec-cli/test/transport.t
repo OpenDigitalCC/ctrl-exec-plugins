@@ -17,6 +17,9 @@ use File::Temp qw(tempdir);
 my $cli = "$Bin/../ctrl-exec-cli";
 my $tmp = tempdir(CLEANUP => 1);
 my $SENTINEL = 'S3NT1NEL-transport-' . $$;
+# Never the host's syslog: warnings go to a socket nobody listens on unless a
+# test points CTRL_EXEC_CLI_SYSLOG_SOCKET at its own.
+$ENV{CTRL_EXEC_CLI_SYSLOG_SOCKET} = "$tmp/no-log.sock";
 
 sub spew { my ($f, $c) = @_; open my $o, '>:raw', $f or die $!; print $o $c; close $o; $f }
 sub slurp { open my $i, '<:raw', $_[0] or return ''; local $/; scalar <$i> // '' }
@@ -142,6 +145,10 @@ my $secret = spew("$tmp/secret.txt", "key $SENTINEL\n");
     my $warned = sub {
         my ($ctx) = @_;
         my $err = '';
+        # as if stderr were a terminal; the log leg is pointed at nothing
+        no warnings 'redefine';
+        local *main::warn_to_stderr = sub { 1 };
+        local $ENV{CTRL_EXEC_CLI_SYSLOG_SOCKET} = "$tmp/no-such-log.sock";
         { local *STDERR; open STDERR, '>', \$err or die; main::warn_plain_input($ctx); }
         return $err;
     };
@@ -164,8 +171,7 @@ my $secret = spew("$tmp/secret.txt", "key $SENTINEL\n");
     my ($rc, $out, $err) = cli("--url http://0.0.0.0:$port run h1 --script s --input '$secret'");
     waitpid $pid, 0;
     is($rc, 0, 'non-loopback plain HTTP: the run still goes ahead');
-    like($err, qr/Warning: sending confidential input over plain HTTP to '0\.0\.0\.0'/,
-        'non-loopback plain HTTP: warned on stderr');
+    unlike($err, qr/Warning/, 'non-loopback plain HTTP: no warning on a non-tty stderr');
     unlike("$out$err", qr/\Q$SENTINEL\E/, 'the warning does not show the input');
     like(slurp($cap), qr/\Q$SENTINEL\E/, 'input was sent');
 
@@ -177,6 +183,61 @@ my $secret = spew("$tmp/secret.txt", "key $SENTINEL\n");
     ($rc, undef, $err) = cli("--url http://0.0.0.0:$port run h1 --script s");
     waitpid $pid, 0;
     unlike($err, qr/Warning/, 'no input: no warning');
+}
+
+# --- T-058: warnings go to the log, never into output a script parses -----------
+{
+    # A datagram unix socket standing in for /dev/log (the CLI reads
+    # CTRL_EXEC_CLI_SYSLOG_SOCKET); the host's syslog is never touched.
+    my $logsock = "$tmp/log.sock";
+    my $log = IO::Socket::UNIX->new(Local => $logsock, Type => SOCK_DGRAM) or die $!;
+    local $ENV{CTRL_EXEC_CLI_SYSLOG_SOCKET} = $logsock;
+
+    my $srv = IO::Socket::INET->new(Listen => 1, LocalAddr => '127.0.0.1',
+        LocalPort => 0, ReuseAddr => 1) or die $!;
+    my $port = $srv->sockport;
+    my ($pid) = serve_one($srv, $RUN_OK);
+    # stdout and stderr captured together, as a job doing 2>&1 would
+    system('bash', '-c', "env -u CTRL_EXEC_API_URL -u CTRL_EXEC_API_SOCKET -u CTRL_EXEC_API_CA "
+        . "HOME='$tmp/nohome' '$cli' --token tok --username u --json "
+        . "--url http://0.0.0.0:$port run h1 --script s --input '$secret' > '$tmp/both' 2>&1 < /dev/null");
+    waitpid $pid, 0;
+    my $both = slurp("$tmp/both");
+    my $j = eval { decode_json($both) };
+    ok($j && $j->{reqid} eq 'abc123', '2>&1 capture parses as JSON') or diag $both;
+    unlike($both, qr/Warning/, '2>&1 capture holds no warning');
+
+    my $got = '';
+    my $rin = ''; vec($rin, fileno($log), 1) = 1;
+    $log->recv($got, 4096) if select(my $r = $rin, undef, undef, 3);
+    like($got, qr/ctrl-exec-cli/, 'the warning reached the log: ident');
+    like($got, qr/Warning: sending confidential input over plain HTTP to '0\.0\.0\.0'/,
+        'the warning reached the log: text');
+    like($got, qr/\A<(?:12)[0-9]*>/, 'the warning reached the log: facility user, priority warning (<12>)');
+    unlike($got, qr/\Q$SENTINEL\E/, 'the log does not hold the input');
+
+    # No syslog socket at all: silent, the run is unaffected
+    local $ENV{CTRL_EXEC_CLI_SYSLOG_SOCKET} = "$tmp/no-such-log.sock";
+    $srv = IO::Socket::INET->new(Listen => 1, LocalAddr => '127.0.0.1',
+        LocalPort => 0, ReuseAddr => 1) or die $!;
+    $port = $srv->sockport;
+    ($pid) = serve_one($srv, $RUN_OK);
+    my ($rc, $out, $err) = cli("--url http://0.0.0.0:$port run h1 --script s --input '$secret'");
+    waitpid $pid, 0;
+    is($rc, 0, 'no syslog socket: the run still succeeds');
+    is($err, '', 'no syslog socket: nothing on stderr');
+
+    # The tty decision, directly (no pty module needed)
+    ok(!main::warn_to_stderr(), 'stderr not a terminal: no stderr warning')
+        unless -t STDERR;
+    {
+        my $shown = '';
+        no warnings 'redefine';
+        local *main::warn_to_stderr = sub { 1 };
+        { local *STDERR; open STDERR, '>', \$shown or die; main::warn_plain_input({ url => 'http://10.1.2.3:1' }); }
+        like($shown, qr/Warning: sending confidential input over plain HTTP/,
+            'stderr a terminal: the warning is shown');
+    }
 }
 
 # --- --ca: verify an https:// API ------------------------------------------------------
