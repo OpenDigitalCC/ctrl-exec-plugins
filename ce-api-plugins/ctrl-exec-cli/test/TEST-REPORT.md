@@ -1,15 +1,15 @@
 # Test report: ctrl-exec-cli (ce-api-plugins)
-Generated: 2026-10-21T07:45:54Z
+Generated: 2026-10-21T17:09:51Z
 
 test/cli.t ........ ok
 test/hint.t ....... ok
 test/input.t ...... ok
 test/transport.t .. ok
 All tests successful.
-Files=4, Tests=188,  4 wallclock secs ( 0.04 usr  0.00 sys +  3.06 cusr  0.92 csys =  4.02 CPU)
+Files=4, Tests=188,  3 wallclock secs ( 0.04 usr  0.01 sys +  2.64 cusr  0.88 csys =  3.57 CPU)
 Result: PASS
 
-1..32
+1..42
 ok 1 a tick that runs a job exits 0
 ok 2 a tick with nothing due exits 0 and says so
 ok 3 a failing job is recorded and the tick still exits 0
@@ -42,5 +42,15 @@ ok 29 explain reports problems and exits 1
 ok 30 explain of a named job shows only that job
 ok 31 explain skips a local time lost to daylight saving, as ticks do
 ok 32 explain and the runner reject bad arguments with status 2
+ok 33 all agents up and certificates fresh: ok at user.info, exit 0
+ok 34 one agent down: fail at user.err naming it, exit 1
+ok 35 certificate inside the window: warn at user.warning, exit 1
+ok 36 HEARTBEAT_CERT_DAYS moves the window
+ok 37 fail beats warn when an agent is down and another certificate is close
+ok 38 API down: fail at user.err with the error
+ok 39 discovery failing is reported as an API failure
+ok 40 zero registered agents: warn, never ok
+ok 41 exactly one logger call per run, in every state
+ok 42 HEARTBEAT_TAG overrides the tag
 
 VERDICT: PASS

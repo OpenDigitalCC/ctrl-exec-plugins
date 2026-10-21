@@ -46,7 +46,9 @@ ctrl-exec-cli/
         ├── example-health.sh
         ├── example-health.conf
         ├── example-run.sh
-        └── example-run.conf
+        ├── example-run.conf
+        ├── heartbeat.sh
+        └── heartbeat.conf
 ```
 
 ## Job definitions
@@ -207,6 +209,64 @@ Lines go to syslog (`local0`, tag `run-jobs`) through `logger` when the
 container has a `/dev/log` socket. The image does not include a syslog daemon;
 without a socket the same lines go to stderr, prefixed `run-jobs:`, and
 `docker compose logs run-jobs` shows them. A logging failure never stops a tick.
+
+## Heartbeat
+
+`scripts/heartbeat.sh` (with `heartbeat.conf`, every five minutes) writes one
+syslog line per run saying whether ctrl-exec is healthy. An external log
+monitor alerts when the `status=ok` line stops arriving, so the absence of
+the line covers every failure at once: `run-jobs` not running, the API down,
+an agent unreachable, or an agent certificate close to expiry (agent
+certificates renew automatically at half-life, so one inside the warning
+window means renewal is failing).
+
+Each run checks, using the CLI with `--json`:
+
+- `health` - the API answers, and its version
+- `discovery` - the registered agent names
+- `ping` - each agent's status and certificate expiry
+
+It writes exactly one line with `logger -t ctrl-exec-heartbeat`, and prints
+the same line on stdout (kept in the job's `.out` state file). The exit
+status is 0 for `ok` and 1 otherwise.
+
+```
+status=ok agents=3/3 api=0.14.0 min_cert_days=287
+status=warn agents=3/3 api=0.14.0 expiring=agent-01:12d
+status=fail agents=2/3 api=0.14.0 down=agent-02
+status=fail api=down error="Connection error: Could not connect to 'dispatcher:7445'"
+```
+
+`ok`
+: Syslog priority `user.info`. Every registered agent answered and every
+  certificate is outside the warning window. `min_cert_days` is the fewest
+  whole days left on any certificate.
+
+`warn`
+: Priority `user.warning`. An agent certificate has fewer days left than the
+  window (`expiring=name:Nd`, or `name:unknown` if no expiry came back), or
+  no agents are registered (`agents=0/0`) - a heartbeat that watches nothing
+  does not say `ok`.
+
+`fail`
+: Priority `user.err`. An agent did not answer the ping (`down=name,...`), or
+  the API or discovery failed (`api=down error="..."`). `fail` beats `warn`;
+  a `fail` line also lists `expiring=` when certificates are close.
+
+Environment, set for the job's container:
+
+`HEARTBEAT_CERT_DAYS`
+: Certificate warning window in days. Default: `30`.
+
+`HEARTBEAT_TAG`
+: Syslog tag. Default: `ctrl-exec-heartbeat`.
+
+Log monitor rule, in prose: alert when no line tagged `ctrl-exec-heartbeat`
+containing `status=ok` has been seen for 15 minutes (three missed runs), and
+alert at once on any `ctrl-exec-heartbeat` line containing `status=warn` or
+`status=fail`. The `logger` call uses the container's syslog socket, so the
+host or collector that receives the container's syslog sees the line; see
+[Logging](#logging).
 
 ## Checking jobs without running them
 

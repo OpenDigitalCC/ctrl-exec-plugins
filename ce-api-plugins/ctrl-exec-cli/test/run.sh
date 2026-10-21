@@ -14,7 +14,7 @@ echo "$out"
 echo
 
 if command -v bats > /dev/null 2>&1; then
-    out="$(cd "$DIR" && bats test/run-jobs.bats 2>&1)" || rc=1
+    out="$(cd "$DIR" && bats test/run-jobs.bats test/heartbeat.bats 2>&1)" || rc=1
     echo "$out"
 else
     echo "run-jobs: NOT RUN - bats is not installed"
