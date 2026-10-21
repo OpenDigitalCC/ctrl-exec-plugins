@@ -15,7 +15,12 @@ our $VERSION = '0.1.0';
 # ---------------------------------------------------------------------------
 
 my $DEFAULT_URL = 'http://localhost:7445';
-my $CONFIG_FILE = "/root/.ctrl-exec-cli.conf";
+# The caller's own config: $HOME, else the passwd entry's home. No home, no
+# config file (never one relative to the current directory).
+my $CONFIG_FILE = do {
+    my $home = length($ENV{HOME} // '') ? $ENV{HOME} : (getpwuid($<))[7];
+    defined $home && length $home ? "$home/.ctrl-exec-cli.conf" : '';
+};
 
 # ---------------------------------------------------------------------------
 # Entry point

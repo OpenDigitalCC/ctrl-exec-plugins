@@ -56,7 +56,8 @@ my $RUN_OK = { ok => 1, reqid => 'abc123', results => [
 sub cli {
     my ($args, $stdin) = @_;
     $stdin = $stdin ? "< '$stdin'" : '< /dev/null';
-    system('bash', '-c', "env -u CTRL_EXEC_API_URL -u CTRL_EXEC_API_SOCKET -u CTRL_EXEC_API_CA "
+    my $home = $ENV{CLI_TEST_HOME} // "$tmp/nohome";   # never the tester's own config
+    system('bash', '-c', "env -u CTRL_EXEC_API_URL -u CTRL_EXEC_API_SOCKET -u CTRL_EXEC_API_CA HOME='$home' "
         . "'$cli' --token tok --username u $args > '$tmp/out' 2> '$tmp/err' $stdin");
     return ($? >> 8, slurp("$tmp/out"), slurp("$tmp/err"));
 }
@@ -222,6 +223,21 @@ SKIP: {
 
     ($rc, undef, $err) = cli("--url https://127.0.0.1:1 --ca '$d/missing.crt' health");
     like($err, qr/--ca: cannot read/, '--ca with an unreadable file: clear error');
+}
+
+# --- config file: read from the caller's home, not a fixed /root path --------
+{
+    my $home = "$tmp/home";
+    mkdir $home or die $!;
+    my $sock = "$tmp/home-api.sock";
+    spew("$home/.ctrl-exec-cli.conf", "socket = $sock\n");
+    my $srv = IO::Socket::UNIX->new(Local => $sock, Type => SOCK_STREAM, Listen => 1) or die $!;
+    my ($pid, $cap) = serve_one($srv, $RUN_OK);
+    local $ENV{CLI_TEST_HOME} = $home;
+    my ($rc, $out, $err) = cli("run h1 --script s");
+    waitpid $pid, 0;
+    is($rc, 0, 'config file in $HOME: run succeeds over its socket') or diag $err;
+    like(slurp($cap), qr{\APOST /run HTTP/1\.0\r\n}, 'config file in $HOME: socket = was used');
 }
 
 done_testing;

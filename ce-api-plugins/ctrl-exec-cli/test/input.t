@@ -49,7 +49,7 @@ sub cli {
     my ($port, $pid, $cap) = stub(@{ $opts->{stub} // [200, { ok => 1, reqid => 'abc123', results => [
         { host => 'h1', exit => 0, rtt => '1ms', stdout => "done\n" } ] }] });
     my $stdin = $opts->{stdin} ? "< '$opts->{stdin}'" : '< /dev/null';
-    my $cmd = "'$cli' --url http://127.0.0.1:$port --token tok --username u @args "
+    my $cmd = "HOME='$tmp/nohome' '$cli' --url http://127.0.0.1:$port --token tok --username u @args "
             . "> '$tmp/out' 2> '$tmp/err' $stdin";
     system('bash', '-c', $cmd);
     my $rc = $? >> 8;
