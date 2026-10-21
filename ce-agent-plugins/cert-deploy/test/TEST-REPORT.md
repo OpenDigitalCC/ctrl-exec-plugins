@@ -1,5 +1,5 @@
 # Test report: cert-deploy (ce-agent-plugins)
-Generated: 2026-10-20T13:11:41Z
+Generated: 2026-10-21T05:14:15Z
 
 ## Contract: no arguments
 
@@ -21,6 +21,9 @@ Generated: 2026-10-20T13:11:41Z
   PASS  agent-cert-check sidecar is read_only
   PASS  agent-cert-deploy sidecar is not read_only
   PASS  agent-service-restart sidecar is not read_only
+  PASS  agent-cert-deploy sidecar: no secret in the arguments
+  PASS  agent-cert-deploy sidecar declares input fields cert,key,ca
+  PASS  agent-cert-deploy sidecar: input field names match the contract
   PASS  agent-cert-deploy sidecar layout enum
 
 ## agent-cert-deploy
@@ -50,6 +53,36 @@ Generated: 2026-10-20T13:11:41Z
   PASS  target-dir with '..' rejected
   PASS  basename with '/' rejected
   PASS  invalid group characters rejected
+  PASS  input fields: deploy, named layout (default)
+  PASS  input fields: result is identical to the argv form
+  PASS  input fields: file mode 640
+  PASS  input fields: folder mode 750
+  PASS  input fields: output does not echo the key
+  PASS  input fields: deploy, pem layout
+  PASS  input fields: pem result is identical to the argv form
+  PASS  input fields: fields without a final newline
+  PASS  input fields: fullchain is certificate then CA, no joined line
+  PASS  input fields: no line joins the END and BEGIN markers
+  PASS  input fields with the old base64 arguments: rejected
+  PASS  …and nothing was written
+  PASS  input fields: 'cert' missing: fails
+  PASS  input fields: 'cert' missing: the field is named
+  PASS  input fields: 'cert' missing: nothing written
+  PASS  input fields: 'key' missing: fails
+  PASS  input fields: 'key' missing: the field is named
+  PASS  input fields: 'key' missing: nothing written
+  PASS  input fields: 'ca' missing: fails
+  PASS  input fields: 'ca' missing: the field is named
+  PASS  input fields: 'ca' missing: nothing written
+  PASS  deprecated argv form: empty input directory (input=fields, nothing sent)
+  PASS  deprecated argv form: same result
+  PASS  deprecated argv form: CTRL_EXEC_INPUT unset, pem layout
+  PASS  no input and no base64 arguments: fails
+  PASS  …and says to declare input=fields
+  PASS  empty input directory and no base64 arguments: fails
+  PASS  …and nothing was written
+  PASS  --test with input present
+  PASS  script marks the argv form deprecated
   PASS  --test, existing folder, own group by name
   PASS  --test reports success
   PASS  --test names the layout
@@ -137,6 +170,16 @@ Generated: 2026-10-20T13:11:41Z
   PASS  two targets: both restarts ran
   PASS  two targets: summary line
   PASS  private key not left on disk
+  PASS  secret: one stdin record per deploy
+  PASS  secret: stdin is a JSON object of cert, key and ca with the issued values
+  PASS  secret: key content in no argv
+  PASS  secret: key (base64) in no argv
+  PASS  secret: certificate content in no argv
+  PASS  secret: no base64 blob in any recorded call
+  PASS  secret: key in no environment
+  PASS  secret: key in no file under the job's directory (output, TMPDIR, log, stdout)
+  PASS  secret: nothing left in TMPDIR
+  PASS  secret: the deploy call used --input-fields -
   PASS  single certificate by name: exit 0
   PASS  restart only for the target that got a certificate
   PASS  no restart for the target that got none
@@ -194,5 +237,5 @@ Generated: 2026-10-20T13:11:41Z
   PASS  example: pem target deployed
   PASS  example: two-file restart passed through
 
-Results: 178 passed, 0 failed, 0 skipped
+Results: 221 passed, 0 failed, 0 skipped
 VERDICT: PASS

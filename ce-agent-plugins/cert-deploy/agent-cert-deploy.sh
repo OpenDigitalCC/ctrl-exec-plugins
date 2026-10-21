@@ -4,10 +4,26 @@
 # to a target directory, in the file layout the consuming service expects.
 # Called by deploy-cert.sh via ctrl-exec-cli run.
 #
+# Input (declare the script `input=fields` in scripts.conf):
+#   The certificate, private key and CA chain arrive as ctrl-exec run input,
+#   not as arguments, so the key is never in a process table. ctrl-exec puts
+#   each field in a file in a private per-run directory, $CTRL_EXEC_INPUT:
+#     $CTRL_EXEC_INPUT/cert   certificate (fullchain), PEM text
+#     $CTRL_EXEC_INPUT/key    private key, PEM text
+#     $CTRL_EXEC_INPUT/ca     CA certificate, PEM text
+#   ctrl-exec removes the directory when the script ends.
+#
 # Arguments:
 #   $1  target-dir   absolute path to write cert files into
 #   $2  basename     filename stem (e.g. example.com) - writes <basename>.crt etc
 #   $3  group        group to own the files (name or gid); '-' to skip chgrp
+#   $4  layout       optional: named (default) or pem
+#
+# DEPRECATED, to be removed in the next release: when no input arrived (an
+# older deploy-cert.sh, or a script not declared input=fields) the old form
+# is still accepted, with the material as base64 arguments. The key is then
+# visible in the process table of this host and of the dispatcher.
+#   $1 target-dir  $2 basename  $3 group
 #   $4  cert-b64     base64-encoded certificate (fullchain)
 #   $5  key-b64      base64-encoded private key
 #   $6  ca-b64       base64-encoded CA certificate
@@ -56,21 +72,53 @@ fi
 target_dir="${1:-}"
 basename="${2:-}"
 group="${3:-}"
-cert_b64="${4:-}"
-key_b64="${5:-}"
-ca_b64="${6:-}"
-if [[ "$mode" == test ]]; then
+
+# Did input arrive? input=fields gives a directory of files, one per field. A
+# script declared input=fields but called without input gets an empty one, so
+# an empty directory counts as no input.
+input_dir=""
+if [[ "$mode" == deploy && -n "${CTRL_EXEC_INPUT:-}" && -d "$CTRL_EXEC_INPUT" \
+      && -n "$(ls -A -- "$CTRL_EXEC_INPUT")" ]]; then
+    input_dir="$CTRL_EXEC_INPUT"
+fi
+
+cert_b64="" key_b64="" ca_b64=""
+if [[ "$mode" == test || -n "$input_dir" ]]; then
     layout="${4:-named}"
 else
+    # DEPRECATED (remove in the next release): the old argument form
+    cert_b64="${4:-}"
+    key_b64="${5:-}"
+    ca_b64="${6:-}"
     layout="${7:-named}"
 fi
 
-if [[ -z "$target_dir" || -z "$basename" || -z "$group" ]] \
-   || [[ "$mode" == deploy && ( -z "$cert_b64" || -z "$key_b64" || -z "$ca_b64" ) ]]; then
-    echo "Usage: agent-cert-deploy <target-dir> <basename> <group> <cert-b64> <key-b64> <ca-b64> [named|pem]" >&2
+if [[ -z "$target_dir" || -z "$basename" || -z "$group" ]]; then
+    usage=1
+elif [[ "$mode" == deploy && -z "$input_dir" && ( -z "$cert_b64" || -z "$key_b64" || -z "$ca_b64" ) ]]; then
+    usage=1
+    echo "Error: no input received (CTRL_EXEC_INPUT is unset or empty) and no base64 arguments given." >&2
+    echo "       The script needs 'input=fields' in scripts.conf and a run sent with input fields cert, key and ca." >&2
+elif [[ -n "$input_dir" && $# -gt 4 ]]; then
+    usage=1
+    echo "Error: input arrived, so the arguments are <target-dir> <basename> <group> [layout] only" >&2
+fi
+if [[ -n "${usage:-}" ]]; then
+    echo "Usage: agent-cert-deploy <target-dir> <basename> <group> [named|pem]   (input fields cert, key, ca)" >&2
     echo "       agent-cert-deploy --test <target-dir> <basename> <group> [named|pem]" >&2
     echo "  pass '-' as group to skip group ownership change" >&2
+    echo "  deprecated: agent-cert-deploy <target-dir> <basename> <group> <cert-b64> <key-b64> <ca-b64> [named|pem]" >&2
     exit 1
+fi
+
+# Input arrived: every field must be there, and the message names the field
+if [[ -n "$input_dir" ]]; then
+    for field in cert key ca; do
+        if [[ ! -f "$input_dir/$field" ]]; then
+            echo "Error: input field '$field' is missing (send fields cert, key and ca)" >&2
+            exit 1
+        fi
+    done
 fi
 
 if [[ "$target_dir" != /* ]]; then
@@ -196,6 +244,19 @@ fi
 
 mkdir -p "$target_dir"
 
+# The three pieces of PEM text, each ending in a newline. From input fields
+# (the sed adds the final newline only when it is missing); from the
+# DEPRECATED base64 arguments otherwise.
+if [[ -n "$input_dir" ]]; then
+    src_cert() { sed -e '$a\' "$input_dir/cert"; }
+    src_key()  { sed -e '$a\' "$input_dir/key"; }
+    src_ca()   { sed -e '$a\' "$input_dir/ca"; }
+else
+    src_cert() { echo "$cert_b64" | base64 -d; }
+    src_key()  { echo "$key_b64"  | base64 -d; }
+    src_ca()   { echo "$ca_b64"   | base64 -d; }
+fi
+
 # Fullchain = leaf certificate followed by intermediate CA. Files are
 # overwritten in place, so a service that bind-mounts a single file keeps
 # seeing the new content.
@@ -203,14 +264,14 @@ case "$layout" in
     named)
         crt_file="$target_dir/${basename}.crt"
         ca_file="$target_dir/${basename}.ca"
-        echo "$cert_b64" | base64 -d > "$crt_file"
-        echo "$key_b64"  | base64 -d > "$target_dir/${basename}.key"
-        echo "$ca_b64"   | base64 -d > "$ca_file"
+        src_cert > "$crt_file"
+        src_key  > "$target_dir/${basename}.key"
+        src_ca   > "$ca_file"
         cat "$crt_file" "$ca_file" > "$target_dir/${basename}.fullchain.crt"
         ;;
     pem)
-        { echo "$cert_b64" | base64 -d; echo "$ca_b64" | base64 -d; } > "$target_dir/fullchain.pem"
-        echo "$key_b64" | base64 -d > "$target_dir/privkey.pem"
+        { src_cert; src_ca; } > "$target_dir/fullchain.pem"
+        src_key > "$target_dir/privkey.pem"
         ;;
 esac
 

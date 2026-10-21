@@ -35,6 +35,16 @@
 # state records it; details are in syslog. A verify WARNING (expiry within
 # the check's warning days) is logged but does not fail the run.
 #
+# The private key never goes in an argument, an environment variable or a file
+# here. The issuing agent's response is read into shell variables (not
+# exported), and the certificate, key and CA go to each destination as run
+# input fields cert, key and ca, piped on stdin to
+# `ctrl-exec-cli run ... --input-fields -`. Only the non-secret values
+# (target dir, domain, group, layout) are arguments. The destination script
+# must be declared `input=fields` in the agent's scripts.conf. Use the CLI
+# over its unix socket (--socket) or an https:// URL, not plain HTTP to
+# another host.
+#
 # Environment overrides:
 #   CE_AGENT_SCRIPT    agent script on Hestia (default: ctrl-exec-hestia)
 #   CE_DEPLOY_SCRIPT   agent script on destination hosts (default: agent-cert-deploy)
@@ -48,7 +58,8 @@
 
 set -euo pipefail
 
-# Issue responses carry the private key
+# Anything written below is private to this user (the issue response and
+# the fields carry the private key; neither is written to a file)
 umask 077
 
 SYSLOG_TAG="run-jobs.deploy-cert"
@@ -138,8 +149,12 @@ extract_section() {
     echo "$content" | awk "/^### ${section} ###$/{found=1; next} /^### /{found=0} found"
 }
 
-# Run a script on one agent, writing the JSON response to a file.
+# Run a script on one agent, keeping the JSON response in RUN_OUT and, when
+# <output-file> is not empty, writing it there too.
 # Usage: run_on <agent> <script> <output-file> [arg ...]
+# When STDIN_FIELDS is not empty it is a JSON object of input fields, piped
+# to ctrl-exec-cli on stdin (--input-fields -); it is a plain shell variable,
+# never exported, and printf is a builtin, so it is in no argv or environment.
 # Returns 0 when the call worked and the script exited 0; otherwise sets
 # RUN_ERROR and returns 1.
 run_on() {
@@ -150,18 +165,44 @@ run_on() {
     local rc=0 result_exit
 
     RUN_ERROR=""
-    ctrl-exec-cli run "$host" --script "$script" --json -- "$@" > "$out" 2>&1 || rc=$?
+    RUN_OUT=""
+    if [[ -n "$STDIN_FIELDS" ]]; then
+        RUN_OUT=$(printf '%s' "$STDIN_FIELDS" \
+            | ctrl-exec-cli run "$host" --script "$script" --json --input-fields - -- "$@" 2>&1) || rc=$?
+    else
+        RUN_OUT=$(ctrl-exec-cli run "$host" --script "$script" --json -- "$@" 2>&1) || rc=$?
+    fi
+    [[ -z "$out" ]] || printf '%s\n' "$RUN_OUT" > "$out"
     if [[ $rc -ne 0 ]]; then
-        RUN_ERROR=$(jq -r '.error // .results[0].error // "unknown error"' "$out" 2>/dev/null \
-            || head -c 200 "$out")
+        RUN_ERROR=$(printf '%s' "$RUN_OUT" | jq -r '.error // .results[0].error // "unknown error"' 2>/dev/null \
+            || printf '%s' "$RUN_OUT" | head -c 200)
         return 1
     fi
-    result_exit=$(jq -r '.results[0].exit // -1' "$out" 2>/dev/null || echo "-1")
+    result_exit=$(printf '%s' "$RUN_OUT" | jq -r '.results[0].exit // -1' 2>/dev/null || echo "-1")
     if [[ "$result_exit" != "0" ]]; then
-        RUN_ERROR=$(jq -r '.results[0].stderr // .results[0].error // "unknown error"' "$out" \
+        RUN_ERROR=$(printf '%s' "$RUN_OUT" | jq -r '.results[0].stderr // .results[0].error // "unknown error"' \
             2>/dev/null || echo "unknown error")
         return 1
     fi
+}
+
+STDIN_FIELDS=""
+
+# The input fields for the destination, as a JSON object, from the issuing
+# agent's stdout text on stdin. Each value is PEM text ending in a newline.
+# Perl (core modules) reads the text from stdin, so no secret is in an argument.
+# Fails when a section is missing or empty.
+fields_from_sections() {
+    perl -MJSON::PP -0777 -ne '
+        my %f;
+        for my $n (qw(CERT KEY CA)) {
+            /^### \Q$n\E ###\n(.*?)(?=^### |\z)/ms or exit 1;
+            my $v = $1;
+            $v =~ s/\s+\z//;
+            length $v or exit 1;
+            $f{lc $n} = "$v\n";
+        }
+        print JSON::PP->new->canonical->encode(\%f);'
 }
 
 issue_success=0
@@ -197,13 +238,13 @@ for entry in "${certificates[@]}"; do
         continue
     fi
 
-    output_file="$CERT_OUTPUT_DIR/${domain}.json"
     args=("issue-cert" "$domain")
     [[ "$wildcard" == "wildcard" ]] && args+=("--wildcard")
 
     log_info "issuing: $domain via $agent (wildcard=${wildcard:-no})"
 
-    if ! run_on "$agent" "$CE_AGENT_SCRIPT" "$output_file" "${args[@]}"; then
+    # The response holds the private key: kept in RUN_OUT, not written to a file
+    if ! run_on "$agent" "$CE_AGENT_SCRIPT" "" "${args[@]}"; then
         log_error "issue failed: $domain - $RUN_ERROR"
         (( issue_failure++ )) || true
         continue
@@ -212,24 +253,21 @@ for entry in "${certificates[@]}"; do
     log_info "issued: $domain"
     (( issue_success++ )) || true
 
-    # Parse cert sections from stdout, then drop the response: it holds the key
-    stdout=$(jq -r '.results[0].stdout' "$output_file")
-    rm -f "$output_file"
+    # Parse the sections from stdout, then drop the response: it holds the key
+    stdout=$(printf '%s' "$RUN_OUT" | jq -r '.results[0].stdout')
+    RUN_OUT=""
     cert=$(extract_section "$stdout" "CERT")
-    key=$(extract_section  "$stdout" "KEY")
-    ca=$(extract_section   "$stdout" "CA")
+    fields=$(printf '%s\n' "$stdout" | fields_from_sections) || fields=""
+    stdout=""
 
-    if [[ -z "$cert" || -z "$key" || -z "$ca" ]]; then
+    if [[ -z "$cert" || -z "$fields" ]]; then
         log_error "deploy skipped: $domain - could not parse cert sections from response"
         (( deploy_failure++ )) || true
         continue
     fi
 
-    # Base64-encode for transport
-    cert_b64=$(echo "$cert" | base64 -w 0)
-    key_b64=$(echo  "$key"  | base64 -w 0)
-    ca_b64=$(echo   "$ca"   | base64 -w 0)
     fingerprint_of["$domain"]=$(cert_fingerprint "$cert")
+    cert=""
 
     # Deploy to each destination configured for this domain
     dest_count=0
@@ -254,9 +292,13 @@ for entry in "${certificates[@]}"; do
         layout="${target_layout_for[$t_name]}"
 
         log_info "deploying: $domain to $t_name ($dest_agent:$target_dir, layout $layout)"
-        if ! run_on "$dest_agent" "$CE_DEPLOY_SCRIPT" \
+        STDIN_FIELDS="$fields"
+        deploy_rc=0
+        run_on "$dest_agent" "$CE_DEPLOY_SCRIPT" \
             "$CERT_OUTPUT_DIR/${domain}.${t_name}.deploy.json" \
-            "$target_dir" "$domain" "$group" "$cert_b64" "$key_b64" "$ca_b64" "$layout"; then
+            "$target_dir" "$domain" "$group" "$layout" || deploy_rc=$?
+        STDIN_FIELDS=""
+        if (( deploy_rc != 0 )); then
             log_error "deploy failed: $domain to $t_name ($dest_agent) - $RUN_ERROR"
             (( deploy_failure++ )) || true
             continue
@@ -268,6 +310,7 @@ for entry in "${certificates[@]}"; do
         deployed_domains["$t_name"]+="$domain "
     done
 
+    fields=""
     if (( dest_count == 0 )); then
         log_info "deploy skipped: $domain - no deploy targets configured"
     fi

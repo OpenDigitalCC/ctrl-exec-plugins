@@ -3,10 +3,13 @@
 #
 # Covers the three agent scripts and the run-jobs deploy job:
 #   - the no-args contract of each agent script (non-zero exit with usage)
-#   - agent-cert-deploy: both layouts, --test, groups, bad arguments
+#   - agent-cert-deploy: both layouts, --test, groups, bad arguments; installing
+#     from input fields ($CTRL_EXEC_INPUT, simulated), the deprecated argv
+#     fallback, and a missing field
 #   - agent-service-restart: --test and a real run against a STUB docker
 #   - agent-cert-check: against local openssl s_server instances on 127.0.0.1
-#   - deploy-cert.sh: end to end against a STUB ctrl-exec-cli
+#   - deploy-cert.sh: end to end against a STUB ctrl-exec-cli, which records
+#     argv, environment and stdin of every call: the key must be on stdin only
 # Needs no network beyond 127.0.0.1, no real docker and no root. Sections
 # that need openssl, jq or perl SKIP (counted, not failed) when it is absent.
 # shellcheck disable=SC2015,SC2012,SC2016  # A && pass || fail is intended; ls output is test-controlled; stub scripts are quoted on purpose
@@ -21,6 +24,8 @@ JOBCONF_EXAMPLE="$DIR/run-jobs/deploy-cert.conf.example"
 PASS=0 FAIL=0 SKIP=0
 T="$(mktemp -d "${TMPDIR:-/tmp}/cert-deploy-test.XXXXXX")" || exit 2
 pids=()
+# The agent scripts read CTRL_EXEC_INPUT; the tests set it where they mean to
+unset CTRL_EXEC_INPUT
 cleanup() {
     local p
     for p in "${pids[@]:-}"; do
@@ -105,6 +110,12 @@ if have jq; then
     expect_eq "agent-cert-check sidecar is read_only" true "$(jq -r '.read_only' "$ACC.schema.json")"
     expect_eq "agent-cert-deploy sidecar is not read_only" false "$(jq -r '.read_only' "$ACD.schema.json")"
     expect_eq "agent-service-restart sidecar is not read_only" false "$(jq -r '.read_only' "$ASR.schema.json")"
+    expect_eq "agent-cert-deploy sidecar: no secret in the arguments" "" \
+        "$(jq -r '.arguments.properties | keys[] | select(test("key|cert_b64|ca_b64"))' "$ACD.schema.json")"
+    expect_eq "agent-cert-deploy sidecar declares input fields cert,key,ca" "cert,key,ca" \
+        "$(jq -r '.input.fields | keys_unsorted | join(",")' "$ACD.schema.json")"
+    expect_eq "agent-cert-deploy sidecar: input field names match the contract" 0 \
+        "$(jq -r '.input.fields | keys[] | select(test("^[A-Za-z0-9_.-]{1,64}$") | not)' "$ACD.schema.json" | wc -l)"
     expect_eq "agent-cert-deploy sidecar layout enum" "named,pem" \
         "$(jq -r '.arguments.properties.layout.enum | join(",")' "$ACD.schema.json")"
 else
@@ -180,6 +191,92 @@ run "$ACD" "$D/x" "a/b" - "$C" "$K" "$A"
 expect_nonzero "basename with '/' rejected" "$RC"
 run "$ACD" "$D/x" example.com 'bad group;' "$C" "$K" "$A"
 expect_nonzero "invalid group characters rejected" "$RC"
+
+# Input fields (input=fields): ctrl-exec gives the script a private directory
+# (0700) of one file per field (0600) named by CTRL_EXEC_INPUT. Simulated here.
+mkfields() {   # mkfields <dir> [skip-field]: cert, key, ca as PEM text
+    local f
+    rm -rf "$1"; mkdir -m 700 "$1"
+    for f in cert key ca; do
+        [ "$f" = "${2:-}" ] && continue
+        case $f in
+            cert) base64 -d <<< "$C" > "$1/cert" ;;
+            key)  base64 -d <<< "$K" > "$1/key" ;;
+            ca)   base64 -d <<< "$A" > "$1/ca" ;;
+        esac
+        chmod 600 "$1/$f"
+    done
+}
+IN="$T/in"
+mkfields "$IN"
+run env CTRL_EXEC_INPUT="$IN" "$ACD" "$D/f-named" example.com "$G"
+expect_rc "input fields: deploy, named layout (default)" 0 "$RC"
+if diff -r "$D/named" "$D/f-named" > /dev/null; then
+    pass "input fields: result is identical to the argv form"
+else
+    fail "input fields: result is identical to the argv form"
+fi
+expect_eq "input fields: file mode 640" 640 "$(stat -c %a "$D/f-named/example.com.key")"
+expect_eq "input fields: folder mode 750" 750 "$(stat -c %a "$D/f-named")"
+expect_lacks "input fields: output does not echo the key" "$OUT" "PRIVATE KEY"
+run env CTRL_EXEC_INPUT="$IN" "$ACD" "$D/f-pem" example.com - pem
+expect_rc "input fields: deploy, pem layout" 0 "$RC"
+if diff -r "$D/pem" "$D/f-pem" > /dev/null; then
+    pass "input fields: pem result is identical to the argv form"
+else
+    fail "input fields: pem result is identical to the argv form"
+fi
+# PEM text without a final newline is accepted and kept apart in the fullchain
+printf -- '-----BEGIN CERTIFICATE-----\nLEAF\n-----END CERTIFICATE-----' > "$IN/cert"
+printf -- '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----' > "$IN/ca"
+run env CTRL_EXEC_INPUT="$IN" "$ACD" "$D/f-nonl" example.com -
+expect_rc "input fields: fields without a final newline" 0 "$RC"
+expect_eq "input fields: fullchain is certificate then CA, no joined line" \
+    "$(printf 'LEAF\nCA' | tr '\n' ' ')" \
+    "$(grep -v -- '-----' "$D/f-nonl/example.com.fullchain.crt" | tr '\n' ' ' | sed 's/ $//')"
+expect_eq "input fields: no line joins the END and BEGIN markers" 0 \
+    "$(grep -c -- 'END CERTIFICATE-----.*BEGIN' "$D/f-nonl/example.com.fullchain.crt")"
+mkfields "$IN"
+
+# Input wins over the deprecated argv form, which then is not allowed
+run env CTRL_EXEC_INPUT="$IN" "$ACD" "$D/f-both" example.com - "$C" "$K" "$A"
+expect_nonzero "input fields with the old base64 arguments: rejected" "$RC"
+[ ! -e "$D/f-both" ] && pass "…and nothing was written" || fail "…and nothing was written"
+
+# A missing field fails before anything is written, and names the field
+for missing in cert key ca; do
+    mkfields "$IN" "$missing"
+    run env CTRL_EXEC_INPUT="$IN" "$ACD" "$D/f-miss-$missing" example.com -
+    expect_nonzero "input fields: '$missing' missing: fails" "$RC"
+    expect_has "input fields: '$missing' missing: the field is named" "$OUT" "input field '$missing' is missing"
+    [ ! -e "$D/f-miss-$missing" ] && pass "input fields: '$missing' missing: nothing written" \
+        || fail "input fields: '$missing' missing: nothing written"
+done
+mkfields "$IN"
+
+# No input arrived: the deprecated argv form still works (one release)
+mkdir -m 700 "$T/in-empty"
+run env CTRL_EXEC_INPUT="$T/in-empty" "$ACD" "$D/f-empty" example.com - "$C" "$K" "$A"
+expect_rc "deprecated argv form: empty input directory (input=fields, nothing sent)" 0 "$RC"
+if diff -r "$D/named" "$D/f-empty" > /dev/null; then
+    pass "deprecated argv form: same result"
+else
+    fail "deprecated argv form: same result"
+fi
+run env -u CTRL_EXEC_INPUT "$ACD" "$D/f-unset" example.com - "$C" "$K" "$A" pem
+expect_rc "deprecated argv form: CTRL_EXEC_INPUT unset, pem layout" 0 "$RC"
+# No input and no old arguments: say what is needed
+run env -u CTRL_EXEC_INPUT "$ACD" "$D/f-none" example.com - pem
+expect_nonzero "no input and no base64 arguments: fails" "$RC"
+expect_has "…and says to declare input=fields" "$OUT" "input=fields"
+run env CTRL_EXEC_INPUT="$T/in-empty" "$ACD" "$D/f-none" example.com -
+expect_nonzero "empty input directory and no base64 arguments: fails" "$RC"
+[ ! -e "$D/f-none" ] && pass "…and nothing was written" || fail "…and nothing was written"
+# --test ignores input
+run env CTRL_EXEC_INPUT="$IN" "$ACD" --test "$D/f-named" example.com -
+expect_rc "--test with input present" 0 "$RC"
+# the deprecation is marked in the script
+grep -q 'DEPRECATED' "$ACD" && pass "script marks the argv form deprecated" || fail "script marks the argv form deprecated"
 
 # --test mode
 mkdir -p "$D/t-existing"
@@ -414,11 +511,24 @@ else
 
     cat > "$J/bin/ctrl-exec-cli" <<'STUB'
 #!/bin/bash
-# Stub: ctrl-exec-cli run <host> --script <name> --json -- <args...>
-# Records "<host> <script> <args>" with base64 blobs shortened to <b64>.
+# Stub: ctrl-exec-cli run <host> --script <name> --json [--input-fields -] -- <args...>
+# Records "<host> <script> [fields] <args>" with base64 blobs shortened to
+# <b64> in $CALLS. In $D/rec it keeps, per call, the full argv, the
+# environment and (with --input-fields -) the stdin.
 host=$2 script=$4
-shift 6
+mkdir -p "$D/rec"
+n=$(( $(cat "$D/rec/seq" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$D/rec/seq"
+echo "$host $script $*" > "$D/rec/argv.$n"
+env > "$D/rec/env.$n"
+shift 5
 rec="$host $script"
+if [[ ${1:-} == --input-fields && ${2:-} == - ]]; then
+    cat > "$D/rec/stdin.$n"
+    echo "$host $script" > "$D/rec/stdin.$n.call"
+    rec+=" [fields]"
+    shift 2
+fi
+shift
 for a in "$@"; do
     if [[ $a =~ ^[A-Za-z0-9+/=]{8,}$ && ! $a =~ ^[0-9A-F]{64}$ && $a != localhost && $a != /* ]]; then rec+=" <b64>"; else rec+=" $a"; fi
 done
@@ -460,12 +570,12 @@ STUB
         local name=$1 conf=$2 filter=${3:-}
         shift 3 2> /dev/null || shift $#
         SDIR="$J/$name"
-        mkdir -p "$SDIR/out"
+        mkdir -p "$SDIR/out" "$SDIR/tmp"
         cp "$JOB" "$SDIR/deploy-cert.sh"
         printf '%s\n' "$conf" > "$SDIR/deploy-cert.conf"
         cp "$J/c.pem" "$J/fp" "$SDIR/"
         RC=0
-        env PATH="$J/bin:$PATH" CALLS="$SDIR/calls" SYSLOG="$SDIR/syslog" D="$SDIR" \
+        env PATH="$J/bin:$PATH" TMPDIR="$SDIR/tmp" CALLS="$SDIR/calls" SYSLOG="$SDIR/syslog" D="$SDIR" \
             CERT_OUTPUT_DIR="$SDIR/out" VERIFY_WAIT=0 "$@" \
             bash "$SDIR/deploy-cert.sh" ${filter:+"$filter"} > "$SDIR/stdout" 2>&1 || RC=$?
         CALLS_TXT="$(grep -v ctrl-exec-hestia "$SDIR/calls" 2> /dev/null)"
@@ -487,13 +597,32 @@ verify = ldaps b.example.test 636'
     scenario two-targets "$TWO"
     expect_rc "two targets on one agent: exit 0" 0 "$RC"
     expect_has "two targets: named layout passed for the first" "$CALLS_TXT" \
-        "web-01.example.com agent-cert-deploy /srv/web/certs a.example.test 101 <b64> <b64> <b64> named"
+        "web-01.example.com agent-cert-deploy [fields] /srv/web/certs a.example.test 101 named"
     expect_has "two targets: pem layout passed for the second" "$CALLS_TXT" \
-        "web-01.example.com agent-cert-deploy /srv/idp/certs/directory b.example.test 1000 <b64> <b64> <b64> pem"
+        "web-01.example.com agent-cert-deploy [fields] /srv/idp/certs/directory b.example.test 1000 pem"
     expect_eq "two targets: both restarts ran" 2 "$(count "$CALLS_TXT" agent-service-restart)"
     expect_has "two targets: summary line" "$LOG_TXT" \
         "complete: issued 2 ok 0 failed | deployed 2 ok 0 failed | restarted 2 ok 0 failed | verified 1 ok 0 failed"
     expect_eq "private key not left on disk" "" "$(grep -rl KEYDATA-SECRET "$SDIR/out" 2> /dev/null)"
+
+    # The secret travels on stdin only: not in any argv, environment, file or log
+    expect_eq "secret: one stdin record per deploy" 2 "$(ls "$SDIR"/rec/stdin.*.call 2> /dev/null | wc -l)"
+    SEC_OK=1
+    for f in "$SDIR"/rec/stdin.[0-9]*; do
+        case $f in *.call) continue ;; esac
+        jq -e '(keys == ["ca","cert","key"]) and .key == "KEYDATA-SECRET\n" and .ca == "CADATA\n"' "$f" > /dev/null 2>&1 || SEC_OK=0
+        jq -j .cert "$f" | cmp -s - "$J/c.pem" || SEC_OK=0
+    done
+    expect_eq "secret: stdin is a JSON object of cert, key and ca with the issued values" 1 "$SEC_OK"
+    expect_eq "secret: key content in no argv" "" "$(grep -l KEYDATA "$SDIR"/rec/argv.* 2> /dev/null)"
+    expect_eq "secret: key (base64) in no argv" "" "$(grep -l "$(printf KEYDATA-SECRET | base64 | cut -c1-16)" "$SDIR"/rec/argv.* 2> /dev/null)"
+    expect_eq "secret: certificate content in no argv" "" "$(grep -l 'BEGIN CERTIFICATE' "$SDIR"/rec/argv.* 2> /dev/null)"
+    expect_eq "secret: no base64 blob in any recorded call" 0 "$(count "$CALLS_TXT" '<b64>')"
+    expect_eq "secret: key in no environment" "" "$(grep -l KEYDATA "$SDIR"/rec/env.* 2> /dev/null)"
+    expect_eq "secret: key in no file under the job's directory (output, TMPDIR, log, stdout)" "" \
+        "$(grep -rl KEYDATA-SECRET "$SDIR" --exclude-dir=rec 2> /dev/null)"
+    expect_eq "secret: nothing left in TMPDIR" "" "$(ls -A "$SDIR/tmp")"
+    expect_has "secret: the deploy call used --input-fields -" "$(cat "$SDIR"/rec/argv.* )" "--input-fields -"
 
     scenario only-web "$TWO" a.example.test
     expect_rc "single certificate by name: exit 0" 0 "$RC"

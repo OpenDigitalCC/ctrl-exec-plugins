@@ -26,6 +26,12 @@
 # INSIDE the container (docker exec <container> id <user>), not a host group
 # of the same name.
 #
+# The certificate, key and CA go to each target as confidential input (fields
+# cert, key and ca), never as arguments. Each target agent needs
+# agent-cert-deploy declared input=fields in its scripts.conf, and the
+# ctrl-exec-cli on this host should use the API's unix socket or an https://
+# URL, not plain HTTP to another host.
+#
 # restart and verify run only for a target that received a certificate in
 # the run. verify's <name> is the host name clients use (a wildcard covers
 # one label under its domain); the port is on localhost unless an address is

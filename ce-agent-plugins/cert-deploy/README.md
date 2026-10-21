@@ -27,7 +27,8 @@ job, `run-jobs/deploy-cert.sh`, which drives them from a configuration file:
 it asks the issuing agent for each certificate, deploys it to the configured
 targets, restarts the services of every target that received a certificate,
 and verifies what each service then serves. It exits non-zero if any step
-failed, so run-jobs records the failure.
+failed, so run-jobs records the failure. The certificate, key and CA reach the
+destinations as confidential input, never as arguments.
 
 The scripts are kept simple on purpose. Who may run them, as which user, and
 where they may write is set by ctrl-exec (the allowlist, the profile and the
@@ -36,8 +37,67 @@ auth hooks), not by the scripts.
 Each script ships a schema sidecar (`*.sh.schema.json`). The agent advertises
 it through `/discovery`, so the scripts appear as typed tools in
 `/openapi-live.json` and in the `ctrl-exec-mcp` bridge. `agent-cert-check` is
-declared read-only; the other two change state. The base64 key argument of
-`agent-cert-deploy` is marked as a private key.
+declared read-only; the other two change state. The certificate, key and CA
+of `agent-cert-deploy` are not arguments but run input fields (see
+[Confidential input](#confidential-input)); its sidecar lists them and marks
+`key` as a private key. The `ctrl-exec-mcp` bridge cannot send run input, so
+it can call `agent-cert-deploy --test` but not a deploy; deploys come from the
+job.
+
+## Confidential input
+
+The private key never travels as a script argument, which would show it in
+the process table of both hosts, in auth hook environments and in the request
+body. `deploy-cert.sh` sends the certificate, key and CA as named input fields
+and `agent-cert-deploy` installs from them.
+
+Field names (the contract is `^[A-Za-z0-9_.-]{1,64}$`):
+
+| Field | Holds |
+| --- | --- |
+| `cert` | the certificate (fullchain), PEM text |
+| `key` | the private key, PEM text (**secret**) |
+| `ca` | the CA certificate chain, PEM text |
+
+On the dispatcher the job pipes a JSON object of the three fields to
+`ctrl-exec-cli run <agent> --script agent-cert-deploy --json --input-fields -
+-- <target-dir> <domain> <group> <layout>`. Only the target folder, domain,
+group and layout are arguments. On the agent the script is declared
+`input=fields` (see [scripts.conf](#scriptsconf)), so ctrl-exec writes each
+field to a file `$CTRL_EXEC_INPUT/<field>` (mode 0600) in a private per-run
+folder (mode 0700) owned by the profile's `run_as` user, and removes the
+folder when the script ends. The script reads the three files and writes the
+layout; the key is never in its arguments or environment.
+
+Transport: the input is as private as the hop that carries it. Run
+`ctrl-exec-cli` over the API's unix socket (`--socket`, or `socket` in
+`~/.ctrl-exec-cli.conf`) or over TLS (an `https://` URL with `--ca`). Over
+plain HTTP to another host the key crosses the network unencrypted; the CLI
+warns when that would happen.
+
+Deprecated argv form: for **one release**, `agent-cert-deploy` still accepts
+the old arguments (`<target-dir> <basename> <group> <cert-b64> <key-b64>
+<ca-b64> [layout]`) when no input arrived, so a new agent script works with an
+older dispatcher job during a rolling upgrade. Input counts as arrived when
+`CTRL_EXEC_INPUT` is set and its folder holds files; a script declared
+`input=fields` but called without input gets an empty folder and uses the
+argument form. This fallback shows the key in the process table and **will be
+removed in the next release**: upgrade `deploy-cert.sh` and declare
+`input=fields`. The reverse mix does not work: the new job against an agent
+script that is the old version or is not declared `input=fields` fails, with a
+message saying input is needed, and nothing is written. Upgrade the agents
+first.
+
+Where secret material is handled:
+
+- Dispatcher, `run-jobs/deploy-cert.sh`: the issuing agent's response is held
+  in shell variables, never exported, never in a file (this response used to be
+  written to `CERT_OUTPUT_DIR` for a moment); the fields JSON is built by
+  `perl` from stdin and sent with `printf` (a builtin) into the CLI's stdin.
+  No argument, environment variable or temporary file holds it.
+- Destination, `agent-cert-deploy.sh`: reads the files in `$CTRL_EXEC_INPUT`
+  and writes the certificate files, mode 640 (`umask 027`, then `chmod`).
+  ctrl-exec owns and removes the input folder.
 
 ## Dependencies
 
@@ -46,7 +106,7 @@ All dependencies are available as Debian trixie system packages.
 | Command | Package | Used by |
 | --- | --- | --- |
 | `bash` | `bash` | all scripts |
-| `base64`, `chgrp`, `chmod`, `stat`, `mkdir`, `timeout` | `coreutils` | all scripts |
+| `base64`, `chgrp`, `chmod`, `stat`, `mkdir`, `sed`, `timeout` | `coreutils`, `sed` | all scripts (`base64` only for the deprecated argument form) |
 | `getent` | `libc-bin` | `agent-cert-deploy --test` |
 | `openssl` | `openssl` | `agent-cert-check` |
 | `docker compose` (v2; v2.17 or later for `--test`) | `docker-compose-v2` or Docker's own packages | `agent-service-restart` |
@@ -82,12 +142,16 @@ executable, and put its configuration next to it as `deploy-cert.conf`
 Add to `/etc/ctrl-exec-agent/scripts.conf` on each destination agent:
 
 ```ini
-agent-cert-deploy     = /opt/ctrl-exec-scripts/agent-cert-deploy.sh      profile=cert-deploy
+agent-cert-deploy     = /opt/ctrl-exec-scripts/agent-cert-deploy.sh      profile=cert-deploy input=fields
 agent-service-restart = /opt/ctrl-exec-scripts/agent-service-restart.sh  profile=svc-restart
 agent-cert-check      = /opt/ctrl-exec-scripts/agent-cert-check.sh
 ```
 
-and define the profiles in `/etc/ctrl-exec-agent/agent.conf`:
+`input=fields` makes ctrl-exec hand `agent-cert-deploy` the run's input as
+files under `$CTRL_EXEC_INPUT`. Without it the script receives no input and
+(for one release) falls back to the deprecated argument form.
+
+Define the profiles in `/etc/ctrl-exec-agent/agent.conf`:
 
 ```ini
 [profile cert-deploy]
@@ -107,7 +171,8 @@ no_new_privileges = yes
 : Needs to run as a user that can write the certificate folder, and
   `CAP_CHOWN` to set a group it is not a member of. Set `writable` to the
   folder the certificates go into: with the executor enabled, that is what
-  confines where the script can write.
+  confines where the script can write. The input folder is readable inside
+  that confinement; it needs no entry in `writable`.
 
 `svc-restart`
 : The `run_as` user must be in the `docker` group and have a home directory
@@ -139,9 +204,16 @@ and calling one with no arguments prints usage to stderr and exits non-zero.
 ### agent-cert-deploy
 
 ```
-agent-cert-deploy <target-dir> <basename> <group|-> <cert-b64> <key-b64> <ca-b64> [named|pem]
+agent-cert-deploy <target-dir> <basename> <group|-> [named|pem]     (input fields cert, key, ca)
 agent-cert-deploy --test <target-dir> <basename> <group|-> [named|pem]
 ```
+
+The certificate, key and CA are the input fields `cert`, `key` and `ca`
+(see [Confidential input](#confidential-input)). Deprecated, removed in the
+next release: with no input, the old form
+`<target-dir> <basename> <group|-> <cert-b64> <key-b64> <ca-b64> [named|pem]`
+is still accepted. If input arrived but a field is missing, the script exits 1
+naming it (`input field 'key' is missing`) and writes nothing.
 
 Writes, overwriting in place, in one of two layouts. `named` (the default):
 
@@ -275,7 +347,9 @@ Comments go on their own line only: a `#` after a value becomes part of the
 value. The job logs to syslog under the tag `run-jobs.deploy-cert` and ends
 with a summary line such as `complete: issued 1 ok 0 failed | deployed 1 ok 0
 failed | restarted 1 ok 0 failed`. The response from the issuing agent holds
-the private key, so the job deletes it as soon as it has been read.
+the private key, so the job keeps it in memory only (shell variables) and
+never writes it to a file. The destinations' scripts need `input=fields` (see
+[scripts.conf](#scriptsconf)).
 
 Environment overrides: `CE_AGENT_SCRIPT`, `CE_DEPLOY_SCRIPT`,
 `CE_RESTART_SCRIPT`, `CE_CHECK_SCRIPT` (script names, defaults as the scripts
@@ -347,6 +421,12 @@ certificate. After a deploy, check on the destination host:
 bash test/run.sh | tee test/TEST-REPORT.md
 ```
 
+It also covers the confidential input: `agent-cert-deploy` installing from a
+simulated `CTRL_EXEC_INPUT` folder (0700, files 0600), the argument fallback
+and a missing field, and `deploy-cert.sh` against a stub `ctrl-exec-cli` that
+records every call's arguments, environment and stdin, asserting the key is on
+stdin only.
+
 The suite needs no network beyond 127.0.0.1, no real docker and no root. It
 runs the agent-check against local `openssl s_server` instances, the restart
 script against a stub `docker`, and the job against a stub `ctrl-exec-cli`.
@@ -355,10 +435,11 @@ absent.
 
 ## Limitations
 
-- The private key reaches the destination agent as a script argument, so it
-  is visible in the process table of that host while `agent-cert-deploy`
-  runs. It will move to a confidential-input channel when ctrl-exec gains
-  one.
+- The deprecated argument form of `agent-cert-deploy` (one release) still
+  shows the key in the process table; it is used only when no input arrives.
+  The key is also in the memory of the issuing agent script, the job's shell
+  and the receiving script while they run, and in the certificate files on the
+  destination, mode 640.
 - Issuing a wildcard certificate can take longer than the dispatcher's
   `read_timeout`; raise it to suit the issuing agent. `ctrl-exec-cli` also
   gives up after 120 seconds with no response.

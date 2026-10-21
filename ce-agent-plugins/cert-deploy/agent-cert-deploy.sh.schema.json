@@ -1,6 +1,6 @@
 {
-  "version": "1",
-  "description": "Write a certificate, private key and CA chain into a folder on this host, in the 'named' layout (<basename>.crt/.key/.ca/.fullchain.crt) or the 'pem' layout (fullchain.pem + privkey.pem). Files are mode 640, the folder 750, optionally group-owned. Overwrites existing files in place. Set test to true to check that a deploy would work, changing nothing. The key_b64 argument is a PRIVATE KEY.",
+  "version": "2",
+  "description": "Write a certificate, private key and CA chain into a folder on this host, in the 'named' layout (<basename>.crt/.key/.ca/.fullchain.crt) or the 'pem' layout (fullchain.pem + privkey.pem). Files are mode 640, the folder 750, optionally group-owned. Overwrites existing files in place. Set test to true to check that a deploy would work, changing nothing. The certificate, key and CA are not arguments: they are run input fields cert, key and ca (the script is declared input=fields in scripts.conf). The key field is a PRIVATE KEY.",
   "read_only": false,
   "idempotent": true,
   "arguments": {
@@ -8,7 +8,7 @@
     "properties": {
       "test": {
         "type": "boolean",
-        "description": "Check that a deploy would work and change nothing. When true, cert_b64, key_b64 and ca_b64 are not used.",
+        "description": "Check that a deploy would work and change nothing. When true, the input fields are not used.",
         "default": false
       },
       "target_dir": {
@@ -22,18 +22,6 @@
       "group": {
         "type": "string",
         "description": "Group (name or numeric gid) to own the folder and files, so a service in that group can read the key. '-' leaves the group unchanged. For a container, the gid of the service user inside the container."
-      },
-      "cert_b64": {
-        "type": "string",
-        "description": "Base64 of the PEM certificate. Required unless test is true."
-      },
-      "key_b64": {
-        "type": "string",
-        "description": "SECRET: base64 of the PEM PRIVATE KEY. Required unless test is true. Visible in the process table while the script runs; handle as a secret."
-      },
-      "ca_b64": {
-        "type": "string",
-        "description": "Base64 of the PEM CA chain. Required unless test is true."
       },
       "layout": {
         "type": "string",
@@ -49,9 +37,15 @@
     { "arg": "target_dir" },
     { "arg": "basename" },
     { "arg": "group" },
-    { "arg": "cert_b64" },
-    { "arg": "key_b64" },
-    { "arg": "ca_b64" },
     { "arg": "layout" }
-  ]
+  ],
+  "input": {
+    "mode": "fields",
+    "required": ["cert", "key", "ca"],
+    "fields": {
+      "cert": { "description": "PEM text of the certificate (fullchain). Required unless test is true." },
+      "key": { "description": "SECRET: PEM text of the PRIVATE KEY. Required unless test is true.", "secret": true },
+      "ca": { "description": "PEM text of the CA chain. Required unless test is true." }
+    }
+  }
 }

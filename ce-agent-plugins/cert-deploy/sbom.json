@@ -6,7 +6,7 @@
     "component": {
       "type": "application",
       "name": "cert-deploy",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Issue a certificate on one ctrl-exec agent, deploy it to many, restart the services and verify what they serve"
     }
   },
@@ -14,25 +14,25 @@
     {
       "type": "application",
       "name": "agent-cert-deploy",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Agent script: writes a certificate, key and CA chain into a folder (named or pem layout)"
     },
     {
       "type": "application",
       "name": "agent-service-restart",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Agent script: restarts docker compose services"
     },
     {
       "type": "application",
       "name": "agent-cert-check",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Agent script: checks the TLS certificate a service is serving, Nagios style"
     },
     {
       "type": "application",
       "name": "deploy-cert",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Dispatcher-side run-jobs job: issues, deploys, restarts and verifies"
     },
     {
