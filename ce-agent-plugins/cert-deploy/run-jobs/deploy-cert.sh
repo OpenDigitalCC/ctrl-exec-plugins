@@ -149,6 +149,69 @@ extract_section() {
     echo "$content" | awk "/^### ${section} ###$/{found=1; next} /^### /{found=0} found"
 }
 
+# Reduce text on stdin to a short one-line reason: the first or last <n>
+# non-blank lines, each cut to 200 characters, joined with " | ". With
+# <secret> 1 the text may hold key material (the issuing script's output is
+# declared output=confidential), so only lines that cannot be key material are
+# kept: nothing between BEGIN/END markers, nothing in a ### KEY ### section
+# (until its END marker; with no marker, until the next header),
+# no ### header, no PEM marker, and only lines with a space in them (a base64
+# or key line has none). A status line such as "certificate validity for
+# example.com: 64% used | No renewal required" passes. The text comes in on
+# stdin, never an argument.
+# Usage: reason_lines <secret 0|1> <head|tail> <n>
+reason_lines() {
+    perl -e '
+        my ($secret, $mode, $n) = @ARGV;
+        my ($in_key, $in_pem, @keep);
+        while (my $l = <STDIN>) {
+            $l =~ s/\s+\z//;
+            if ($secret) {
+                if ($l =~ /^### (\S+) ###$/) { $in_key = $1 eq "KEY"; next }
+                if ($l =~ /-----(BEGIN|END)/) { $in_pem = $1 eq "BEGIN"; $in_key = 0 if !$in_pem; next }
+                next if $in_pem || $in_key;
+                next unless $l =~ /\S\s+\S/;
+            }
+            next unless $l =~ /\S/;
+            push @keep, length $l > 200 ? substr($l, 0, 200) . "..." : $l;
+        }
+        @keep = $mode eq "head" ? @keep[0 .. ($n > $#keep ? $#keep : $n - 1)]
+                                : @keep[($#keep - $n + 1 < 0 ? 0 : $#keep - $n + 1) .. $#keep]
+            if @keep;
+        print join(" | ", @keep);' "$1" "$2" "$3"
+}
+
+# The reason for a failed call, from RUN_OUT, RUN_CONFIDENTIAL (1 while the
+# issuing script runs) and the call's exit status $1 (0 when the CLI worked).
+# Never empty. The CLI's own message (timeout, connection) when it failed
+# without a JSON answer; else the script's stderr, the API's error, or the
+# exit code with the last lines of the script's stdout.
+fail_reason() {
+    local cli_rc="$1" secret="${RUN_CONFIDENTIAL:-0}" ex err why tail
+
+    if ! printf '%s' "$RUN_OUT" | jq -e 'type == "object"' > /dev/null 2>&1; then
+        tail=$(printf '%s' "$RUN_OUT" | reason_lines "$secret" head 3)
+        printf '%s' "${tail:-ctrl-exec-cli exit $cli_rc with no output}"
+        return 0
+    fi
+    why=$(printf '%s' "$RUN_OUT" | jq -r '.error // .results[0].error // ""' 2> /dev/null || true)
+    if (( cli_rc != 0 )); then
+        printf '%s' "${why:-ctrl-exec-cli exit $cli_rc, no error in its answer}"
+        return 0
+    fi
+    ex=$(printf '%s' "$RUN_OUT" | jq -r '.results[0].exit // -1' 2> /dev/null || echo -1)
+    err=$(printf '%s' "$RUN_OUT" | jq -r '.results[0].stderr // ""' 2> /dev/null | reason_lines "$secret" tail 3 || true)
+    if [[ -n "$err" ]]; then
+        printf '%s' "$err"
+    elif [[ -n "$why" ]]; then
+        printf '%s' "$why"
+    else
+        tail=$(printf '%s' "$RUN_OUT" | jq -r '.results[0].stdout // ""' 2> /dev/null \
+            | reason_lines "$secret" tail 3 || true)
+        printf 'exit %s%s' "$ex" "${tail:+ - $tail}"
+    fi
+}
+
 # Run a script on one agent, keeping the JSON response in RUN_OUT and, when
 # <output-file> is not empty, writing it there too.
 # Usage: run_on <agent> <script> <output-file> [arg ...]
@@ -156,7 +219,8 @@ extract_section() {
 # to ctrl-exec-cli on stdin (--input-fields -); it is a plain shell variable,
 # never exported, and printf is a builtin, so it is in no argv or environment.
 # Returns 0 when the call worked and the script exited 0; otherwise sets
-# RUN_ERROR and returns 1.
+# RUN_ERROR (never empty, never key material when RUN_CONFIDENTIAL is 1) and
+# returns 1.
 run_on() {
     local host="$1"
     local script="$2"
@@ -174,18 +238,17 @@ run_on() {
     fi
     [[ -z "$out" ]] || printf '%s\n' "$RUN_OUT" > "$out"
     if [[ $rc -ne 0 ]]; then
-        RUN_ERROR=$(printf '%s' "$RUN_OUT" | jq -r '.error // .results[0].error // "unknown error"' 2>/dev/null \
-            || printf '%s' "$RUN_OUT" | head -c 200)
+        RUN_ERROR=$(fail_reason "$rc")
         return 1
     fi
     result_exit=$(printf '%s' "$RUN_OUT" | jq -r '.results[0].exit // -1' 2>/dev/null || echo "-1")
     if [[ "$result_exit" != "0" ]]; then
-        RUN_ERROR=$(printf '%s' "$RUN_OUT" | jq -r '.results[0].stderr // .results[0].error // "unknown error"' \
-            2>/dev/null || echo "unknown error")
+        RUN_ERROR=$(fail_reason 0)
         return 1
     fi
 }
 
+RUN_CONFIDENTIAL=0
 STDIN_FIELDS=""
 
 # The input fields for the destination, as a JSON object, from the issuing
@@ -244,8 +307,13 @@ for entry in "${certificates[@]}"; do
     log_info "issuing: $domain via $agent (wildcard=${wildcard:-no})"
 
     # The response holds the private key: kept in RUN_OUT, not written to a file
-    if ! run_on "$agent" "$CE_AGENT_SCRIPT" "" "${args[@]}"; then
+    RUN_CONFIDENTIAL=1
+    issue_rc=0
+    run_on "$agent" "$CE_AGENT_SCRIPT" "" "${args[@]}" || issue_rc=$?
+    RUN_CONFIDENTIAL=0
+    if (( issue_rc != 0 )); then
         log_error "issue failed: $domain - $RUN_ERROR"
+        RUN_OUT=""
         (( issue_failure++ )) || true
         continue
     fi
@@ -258,8 +326,18 @@ for entry in "${certificates[@]}"; do
     RUN_OUT=""
     cert=$(extract_section "$stdout" "CERT")
     fields=$(printf '%s\n' "$stdout" | fields_from_sections) || fields=""
+    # "No renewal required" is a normal answer, not a failure: the issuing
+    # script then has nothing new to deploy. Only its status line is kept.
+    status_line=""
+    if [[ -z "$fields" ]]; then
+        status_line=$(printf '%s\n' "$stdout" | reason_lines 1 tail 3 | grep -i 'no renewal required' || true)
+    fi
     stdout=""
 
+    if [[ -n "$status_line" ]]; then
+        log_info "deploy skipped: $domain - $status_line"
+        continue
+    fi
     if [[ -z "$cert" || -z "$fields" ]]; then
         log_error "deploy skipped: $domain - could not parse cert sections from response"
         (( deploy_failure++ )) || true

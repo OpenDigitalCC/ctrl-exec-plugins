@@ -535,10 +535,26 @@ done
 echo "$rec" >> "$CALLS"
 case $script in
     ctrl-exec-hestia)
+        case ${ISSUE_MODE:-ok} in
+            silent)   # exit 1, nothing on stderr, a key on stdout (the field case)
+                jq -n '{ok:true,results:[{exit:1,stdout:"### CERT ###\n-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\n### KEY ###\n-----BEGIN PRIVATE KEY-----\nKEYDATA-SECRET\n-----END PRIVATE KEY-----\nKEYDATA-SECRET-LINE\ncertificate validity for example.test: 64% used | No renewal required\n",stderr:""}]}'
+                exit 0 ;;
+            quiet)    # exit 4, no output at all
+                echo '{"ok":true,"results":[{"exit":4,"stdout":"","stderr":""}]}'; exit 0 ;;
+            timeout)  # the dispatcher gave up on the agent
+                echo '{"ok":true,"results":[{"exit":-1,"error":"read timeout after 60s"}]}'; exit 0 ;;
+            clifail)  # the CLI itself failed: text on stderr, no JSON
+                echo "Error: Connection error: timed out reading from socket /run/x.sock" >&2; exit 1 ;;
+            norenew)  # exit 0, certificate only, status line
+                jq -n '{ok:true,results:[{exit:0,stdout:"### CERT ###\n-----BEGIN CERTIFICATE-----\nQUJD\n-----END CERTIFICATE-----\ncertificate validity for example.test: 64% used | No renewal required\n",stderr:""}]}'
+                exit 0 ;;
+        esac
         out="### CERT ###"$'\n'"$(cat "$D/c.pem")"$'\n'"### KEY ###"$'\n'"KEYDATA-SECRET"$'\n'"### CA ###"$'\n'"CADATA"
         jq -n --arg o "$out" '{ok:true,results:[{exit:0,stdout:$o}]}' ;;
     agent-cert-deploy)
-        if [[ "${FAIL_DEPLOY:-}" == "$host" ]]; then
+        if [[ "${SILENT_DEPLOY:-}" == "$host" ]]; then
+            echo '{"ok":true,"results":[{"exit":3,"stdout":"first line\nmount: /srv/x is busy","stderr":""}]}'
+        elif [[ "${FAIL_DEPLOY:-}" == "$host" ]]; then
             echo '{"ok":true,"results":[{"exit":1,"stderr":"chgrp: invalid group"}]}'
         else
             echo '{"ok":true,"results":[{"exit":0,"stdout":"deployed"}]}'
@@ -675,6 +691,41 @@ restart = web /srv/web/compose.yml nginx'
     expect_rc "deploy fails on the agent: exit 1" 1 "$RC"
     expect_has "agent error is logged" "$LOG_TXT" "chgrp: invalid group"
     expect_lacks "no restart when every deploy failed" "$CALLS_TXT" agent-service-restart
+
+    # Every failure line carries a reason (T-060)
+    ONE='agent = issuer-01.example.com
+certificate = a.example.test
+target = web web-01.example.com /srv/web/certs 101
+deploy = a.example.test web
+restart = web /srv/web/compose.yml nginx'
+    scenario issue-silent "$ONE" "" ISSUE_MODE=silent
+    expect_rc "issue exits 1 with empty stderr: exit 1" 1 "$RC"
+    expect_has "issue silent failure: the exit code is the reason" "$LOG_TXT" "issue failed: a.example.test - exit 1"
+    expect_has "issue silent failure: the status line is kept" "$LOG_TXT" "No renewal required"
+    expect_lacks "issue silent failure: no key line in the log" "$LOG_TXT" "KEYDATA"
+    expect_lacks "issue silent failure: no PEM marker in the log" "$LOG_TXT" "-----"
+    expect_eq "issue silent failure: no key text in any file or output" "" \
+        "$(grep -rl KEYDATA "$SDIR" --exclude-dir=rec 2> /dev/null)"
+    scenario issue-quiet "$ONE" "" ISSUE_MODE=quiet
+    expect_has "issue exit 4 with no output: reason is the exit code" "$LOG_TXT" "issue failed: a.example.test - exit 4"
+    scenario issue-timeout "$ONE" "" ISSUE_MODE=timeout
+    expect_has "issue timed out on the dispatcher: its error is the reason" "$LOG_TXT" \
+        "issue failed: a.example.test - read timeout after 60s"
+    scenario issue-clifail "$ONE" "" ISSUE_MODE=clifail
+    expect_rc "CLI failure without JSON: exit 1" 1 "$RC"
+    expect_has "CLI failure without JSON: the CLI's message is the reason" "$LOG_TXT" \
+        "issue failed: a.example.test - Error: Connection error: timed out reading from socket"
+    scenario issue-norenew "$ONE" "" ISSUE_MODE=norenew
+    expect_rc "no renewal required is not a failure: exit 0" 0 "$RC"
+    expect_has "no renewal required: logged as skipped" "$LOG_TXT" "deploy skipped: a.example.test - certificate validity for example.test: 64% used | No renewal required"
+    expect_lacks "no renewal required: nothing logged as an error" "$LOG_TXT" "failed: "
+    expect_eq "no renewal required: nothing deployed" 0 "$(count "$CALLS_TXT" agent-cert-deploy)"
+    expect_eq "no renewal required: nothing restarted" 0 "$(count "$CALLS_TXT" agent-service-restart)"
+    expect_lacks "no renewal required: no PEM in the log" "$LOG_TXT" "BEGIN"
+    scenario deploy-silent "$ONE" "" SILENT_DEPLOY=web-01.example.com
+    expect_rc "deploy exits 3 with empty stderr: exit 1" 1 "$RC"
+    expect_has "deploy silent failure: exit code and last stdout lines" "$LOG_TXT" \
+        "deploy failed: a.example.test to web (web-01.example.com) - exit 3 - first line | mount: /srv/x is busy"
 
     scenario restart-unknown-target 'agent = issuer-01.example.com
 certificate = a.example.test

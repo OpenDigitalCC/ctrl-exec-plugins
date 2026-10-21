@@ -1,5 +1,5 @@
 # Test report: cert-deploy (ce-agent-plugins)
-Generated: 2026-10-21T05:14:15Z
+Generated: 2026-10-21T09:20:46Z
 
 ## Contract: no arguments
 
@@ -199,6 +199,24 @@ Generated: 2026-10-21T05:14:15Z
   PASS  deploy fails on the agent: exit 1
   PASS  agent error is logged
   PASS  no restart when every deploy failed
+  PASS  issue exits 1 with empty stderr: exit 1
+  PASS  issue silent failure: the exit code is the reason
+  PASS  issue silent failure: the status line is kept
+  PASS  issue silent failure: no key line in the log
+  PASS  issue silent failure: no PEM marker in the log
+  PASS  issue silent failure: no key text in any file or output
+  PASS  issue exit 4 with no output: reason is the exit code
+  PASS  issue timed out on the dispatcher: its error is the reason
+  PASS  CLI failure without JSON: exit 1
+  PASS  CLI failure without JSON: the CLI's message is the reason
+  PASS  no renewal required is not a failure: exit 0
+  PASS  no renewal required: logged as skipped
+  PASS  no renewal required: nothing logged as an error
+  PASS  no renewal required: nothing deployed
+  PASS  no renewal required: nothing restarted
+  PASS  no renewal required: no PEM in the log
+  PASS  deploy exits 3 with empty stderr: exit 1
+  PASS  deploy silent failure: exit code and last stdout lines
   PASS  restart for an unknown target: exit 1
   PASS  bad restart line logged
   PASS  certificate with no deploy line: exit 0
@@ -237,5 +255,5 @@ Generated: 2026-10-21T05:14:15Z
   PASS  example: pem target deployed
   PASS  example: two-file restart passed through
 
-Results: 221 passed, 0 failed, 0 skipped
+Results: 239 passed, 0 failed, 0 skipped
 VERDICT: PASS

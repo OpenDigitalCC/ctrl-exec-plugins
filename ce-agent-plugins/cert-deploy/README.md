@@ -367,7 +367,14 @@ value. The job logs to syslog under the tag `run-jobs.deploy-cert` and ends
 with a summary line such as `complete: issued 1 ok 0 failed | deployed 1 ok 0
 failed | restarted 1 ok 0 failed`. The response from the issuing agent holds
 the private key, so the job keeps it in memory only (shell variables) and
-never writes it to a file. The destinations' scripts need `input=fields` (see
+never writes it to a file. Every failure line carries a reason: the
+script's stderr or the API's error, else `exit <n>` and the last lines of the
+script's stdout, or the CLI's own message when it failed without an answer.
+For the issuing script (`output=confidential`) only lines that cannot be key
+material are reported: nothing between BEGIN/END markers or in the KEY
+section. When the issuing script exits 0 without new sections and says "No
+renewal required", the job logs `deploy skipped` and does not count a failure.
+The destinations' scripts need `input=fields` (see
 [scripts.conf](#scriptsconf)).
 
 Environment overrides: `CE_AGENT_SCRIPT`, `CE_DEPLOY_SCRIPT`,
