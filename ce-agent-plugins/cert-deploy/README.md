@@ -187,6 +187,23 @@ no_new_privileges = yes
   the agent refuses to start (exit 78, "reference an undefined profile: ...
   -> default") without it.
 
+On the issuing agent, declare the issuing script (the name the job uses,
+`CE_AGENT_SCRIPT`, default `ctrl-exec-hestia`) with `output=confidential`:
+
+```ini
+ctrl-exec-hestia      = /opt/ctrl-exec-scripts/ctrl-exec-hestia.sh  output=confidential
+```
+
+Its output is the new certificate and private key. With `output=confidential`
+the job still gets the output in the synchronous response, but the agent marks
+the result confidential and the dispatcher's run store
+(`/var/lib/ctrl-exec/runs/<reqid>.json`, kept 24 hours) records the exit
+status only, so the key is not left on the dispatcher's disk. The job runs the
+script synchronously, which the setting requires (async runs of such a script
+are refused). This needs ctrl-exec 0.13.0 or later on the issuing agent; an
+older agent does not mark the result, and its output is stored as before. Keep
+the `profile=` the issuing script already has.
+
 The agent rereads `scripts.conf` on `systemctl reload ctrl-exec-agent`. The
 executor notices a changed `agent.conf` by itself, but the agent does not
 reread `agent.conf` on reload, so after adding or changing a profile run
@@ -316,7 +333,9 @@ verify      = <target-name> <name> <[address:]port> [starttls-protocol]
   agent script's output to hold `### CERT ###`, `### KEY ###` and
   `### CA ###` sections, each followed by a PEM block. The issuing script is
   not part of this plugin; its name defaults to `ctrl-exec-hestia` and is set
-  with `CE_AGENT_SCRIPT`.
+  with `CE_AGENT_SCRIPT`. Its output holds the new private key, so declare it
+  `output=confidential` on the issuing agent (see
+  [scripts.conf](#scriptsconf)).
 
 `target`
 : One destination: an agent, a folder on it, the group for the files and the
