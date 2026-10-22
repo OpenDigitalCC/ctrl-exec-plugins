@@ -143,10 +143,12 @@ plugins need. In `/etc/ctrl-exec-agent/agent.conf`:
 run_as = nagios
 ```
 
-Use a profile that has `run_as` set to an unprivileged account (`nagios` is
-the account the Debian package creates) rather than root. Some plugins need
-more: `check_icmp` is setuid on Debian, and checks that read protected logs
-need a user that can read them. Reload with `systemctl reload
+Use a profile that has `run_as` set to an unprivileged account rather than
+root; `nagios` above is an example name, create the account if the host has
+none. Some plugins need more. Profiles set no_new_privileges by default, so a
+setuid plugin such as `check_icmp` does not gain its privilege under one: use
+a check that needs none (`check_ping`), or a profile with the capability it
+needs. Checks that read protected logs need a user that can read them. Reload with `systemctl reload
 ctrl-exec-agent`; a changed `agent.conf` needs `systemctl restart
 ctrl-exec-agent`. Profiles are applied only when the executor is enabled.
 
