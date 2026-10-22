@@ -1,5 +1,5 @@
 # Test report: nagios-check (ce-agent-plugins)
-Generated: 2026-10-22T17:53:35Z
+Generated: 2026-10-22T17:56:14Z
 
 ## Contract: no arguments and the sidecar
 
@@ -11,7 +11,7 @@ Generated: 2026-10-22T17:53:35Z
   PASS  nagios-check.pl has a perl shebang
   PASS  schema sidecar is valid JSON with arguments, argv and read_only
   PASS  perl -c passes
-  PASS  wrapper stays small (296 lines)
+  PASS  wrapper stays small (304 lines)
 
 ## State mapping and the overall state
 
@@ -202,6 +202,12 @@ Generated: 2026-10-22T17:53:35Z
   PASS  --check-config bad: error names the file and a line
   PASS  --check-config bad: the line is not echoed
   PASS  --check-config bad: state and no checks
+  PASS  --check-config: a file outside the config folder: exit 3
+  PASS  --check-config: ...says where it may read
+  PASS  --check-config: ...and echoes nothing of it
+  PASS  --check-config: a symlink in the folder: exit 3
+  PASS  --check-config: ...echoes nothing of its target
+  PASS  --check-config: a path that resolves into the folder is read
   PASS  --check-config: missing file exit 3
   PASS  --check-config: missing file named
   PASS  --check-config without a file: exit 3
@@ -378,5 +384,5 @@ Generated: 2026-10-22T17:53:35Z
   PASS  non-root without --dry-run: FAIL
   PASS  install.sh is shellcheck clean
 
-Results: 331 passed, 0 failed, 1 skipped
+Results: 337 passed, 0 failed, 1 skipped
 VERDICT: PASS

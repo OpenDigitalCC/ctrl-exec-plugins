@@ -358,6 +358,18 @@ y $SECRET"; do
     expect_lacks "--check-config bad: the line is not echoed" "$OUT" "$SECRET"
     jis "--check-config bad: state and no checks" '[$d->{state}, exists $d->{checks} ? 1 : 0]' '["UNKNOWN",0]'
 done
+mkdir -p "$T/elsewhere"
+printf '%s\n' "password = s3cret-value" > "$T/elsewhere/app.conf"
+nc --check-config "$T/elsewhere/app.conf"
+expect_eq "--check-config: a file outside the config folder: exit 3" 3 "$RC"
+expect_has "--check-config: ...says where it may read" "$OUT" "only reads files in $T"
+expect_lacks "--check-config: ...and echoes nothing of it" "$OUT" "s3cret"
+ln -s "$T/elsewhere/app.conf" "$T/link.conf"
+nc --check-config "$T/link.conf"
+expect_eq "--check-config: a symlink in the folder: exit 3" 3 "$RC"
+expect_lacks "--check-config: ...echoes nothing of its target" "$OUT" "s3cret"
+nc --check-config "$T/elsewhere/../candidate.conf"
+expect_eq "--check-config: a path that resolves into the folder is read" 0 "$RC"
 nc --check-config "$T/nonexistent.conf"
 expect_eq "--check-config: missing file exit 3" 3 "$RC"
 expect_has "--check-config: missing file named" "$OUT" "nonexistent.conf"

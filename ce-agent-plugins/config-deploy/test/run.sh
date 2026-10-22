@@ -809,8 +809,9 @@ shellcheck -x "$JOB" > /dev/null 2>&1 && pass "config-push.sh is shellcheck clea
 # ---------------------------------------------------------------------------
 heading "nagios-check --check-config as the validate command"
 
-if [ -x "$NAGIOS" ] && perl "$NAGIOS" --check-config /dev/null > /dev/null 2>&1; then
+if [ -x "$NAGIOS" ] && grep -q -- "--check-config FILE" "$NAGIOS"; then
     rm -rf "$D"; mkdir -p "$D"
+    export NAGIOS_CHECKS_CONF="$D/checks.conf"    # --check-config reads only the config's folder
     mapw "nagios-checks = $D/checks.conf validate=$NAGIOS --check-config {}"
     setin 'plugin_dir = /nonexistent\nload = check_load -w 1\n'
     cd_run nagios-checks
@@ -822,6 +823,7 @@ if [ -x "$NAGIOS" ] && perl "$NAGIOS" --check-config /dev/null > /dev/null 2>&1;
     expect_eq "bad nagios config: refused" 1 "$RC"
     expect_has "bad nagios config: the parser's line number" "$(jv '$d->{error}')" "line 1"
     expect_eq "bad nagios config: old file kept" "$OLDN" "$(sha "$D/checks.conf")"
+    unset NAGIOS_CHECKS_CONF
 else
     skip "nagios-check --check-config not available"
 fi

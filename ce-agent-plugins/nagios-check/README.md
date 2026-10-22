@@ -314,7 +314,10 @@ The arguments are check names, or one of three options.
   exits 0 when it parses; a plugin that is missing shows `available:false`
   (the file may be for another host or deployed before the plugin is) and
   does not change the exit code. A file that cannot be read or does not parse
-  exits 3 with an `error` that names the line and does not repeat it:
+  exits 3 with an `error` that names the line and does not repeat it. Only a
+  file in the config's own folder is read (`/etc/nagios-checks/`, where
+  config-deploy stages the new file); any other path exits 3 unread, so a
+  caller cannot have other files on the host parsed and echoed back:
 
   ```json
   {"host":"agent-01","config":"/etc/nagios-checks/.checks.conf.new.123",

@@ -1,5 +1,5 @@
 # Test report: config-deploy (ce-agent-plugins)
-Generated: 2026-10-22T17:53:20Z
+Generated: 2026-10-22T17:56:30Z
 
 ## Contract: usage, the script and the sidecar
 

@@ -7,7 +7,8 @@
 #                                        is available (exit 3 if any is not)
 #   nagios-check --check-config FILE     parse FILE like the config, run nothing:
 #                                        list its checks and settings (exit 0 if
-#                                        it parses, 3 with an error if not)
+#                                        it parses, 3 with an error if not); FILE
+#                                        must be in the config's own folder
 #
 # The caller names the checks; this host's config says how to run each one
 # (/etc/nagios-checks/checks.conf, or $NAGIOS_CHECKS_CONF; it must be readable
@@ -258,6 +259,13 @@ sub main {
     my $host = hostname();
     if ($ARGV[0] eq '--check-config') {
         @ARGV == 2 or fail('--check-config takes one file');
+        # Only a file in the config's own folder (where config-deploy stages
+        # it): the caller must not get keys and values of other files back.
+        my ($cdir) = $CONF =~ m{^(.*)/[^/]*$};
+        my $fdir = realpath($ARGV[1] =~ m{/} ? ($ARGV[1] =~ m{^(.*)/[^/]*$})[0] || '/' : '.');
+        my $want = realpath(length $cdir ? $cdir : '/');
+        defined $fdir && defined $want && $fdir eq $want && !-l $ARGV[1]
+            or fail("--check-config only reads files in " . (length $cdir ? $cdir : '/'));
         my $cfg = load_conf($ARGV[1]);
         print $json->encode({ host => $host, config => $ARGV[1], checks => check_rows($cfg),
                               settings => { plugin_dir => $cfg->{plugin_dir}, timeout => $cfg->{timeout} + 0,
