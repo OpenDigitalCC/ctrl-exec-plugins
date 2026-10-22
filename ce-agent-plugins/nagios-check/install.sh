@@ -24,7 +24,9 @@ SCRIPT_DIR="$ROOT/opt/ctrl-exec-scripts"
 DRY=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        --script-dir) SCRIPT_DIR="$ROOT$2"; shift ;;
+        --script-dir)
+            [ -n "${2:-}" ] || { echo "install.sh: --script-dir needs a directory" >&2; exit 2; }
+            SCRIPT_DIR="$ROOT$2"; shift ;;
         --dry-run) DRY=1 ;;
         *) echo "usage: install.sh [--script-dir DIR] [--dry-run]" >&2; exit 2 ;;
     esac
@@ -56,7 +58,8 @@ put() {
     local what="installed $dest"
     [ -e "$dest" ] && what="replaced $dest"
     if [ "$DRY" = 0 ]; then
-        install -d -m 755 "${OWNER[@]}" "$(dirname "$dest")"
+        # create the folder only if missing: an existing one keeps its owner and mode
+        [ -d "$(dirname "$dest")" ] || install -d -m 755 "${OWNER[@]}" "$(dirname "$dest")"
         install -m 755 "${OWNER[@]}" "$src" "$dest"
     fi
     changed "$what"
