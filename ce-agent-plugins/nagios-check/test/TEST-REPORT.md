@@ -1,0 +1,179 @@
+# Test report: nagios-check (ce-agent-plugins)
+Generated: 2026-10-22T12:48:16Z
+
+## Contract: no arguments and the sidecar
+
+  PASS  no arguments exits 3
+  PASS  no arguments prints usage on stderr
+  PASS  no arguments: stdout is one JSON document
+  PASS  no arguments: state UNKNOWN with an error
+  PASS  nagios-check.pl is executable
+  PASS  nagios-check.pl has a perl shebang
+  PASS  schema sidecar is valid JSON with arguments, argv and read_only
+  PASS  perl -c passes
+  PASS  wrapper stays small (220 lines)
+
+## State mapping and the overall state
+
+  PASS  OK: exit 0
+  PASS  OK: state, code, summary
+  PASS  OK: host is set
+  PASS  OK: check fields
+  PASS  OK: duration_ms is a number
+  PASS  WARNING: exit 1
+  PASS  WARNING: state and code
+  PASS  CRITICAL: exit 2
+  PASS  CRITICAL: state
+  PASS  UNKNOWN: exit 3
+  PASS  OK+WARNING: overall WARNING, exit 1
+  PASS  OK+WARNING: per-check states kept
+  PASS  OK+UNKNOWN: overall UNKNOWN, exit 3
+  PASS  WARNING+UNKNOWN: overall WARNING (CRITICAL > WARNING > UNKNOWN > OK), exit 1
+  PASS  all four: overall CRITICAL, exit 2
+  PASS  all four: order as asked
+  PASS  all four: top-level state
+  PASS  a name given twice runs once
+  PASS  --all runs every configured check in config order
+  PASS  --all: exit is the worst (CRITICAL)
+  PASS  a plugin that prints nothing: OK with an empty summary
+  PASS  non-UTF-8 plugin output still gives valid JSON
+  PASS  the plugin gets no stdin
+
+## Perfdata
+
+  PASS  perf plugin: exit 1
+  PASS  summary stops at the first |
+  PASS  ten items parsed, the malformed one skipped
+  PASS  quoted label with a space, unit, all five fields
+  PASS  '' inside a quoted label is one quote
+  PASS  no unit: empty uom, other fields null
+  PASS  fractional value, empty fields are null
+  PASS  ranges stay strings (10:20 style, @ prefix), unit s
+  PASS  value U is null
+  PASS  percent unit
+  PASS  ~:5 and 10: ranges kept as strings
+  PASS  long output is the lines between, up to the |
+  PASS  a | in the long output starts more perfdata
+  PASS  ...and its unit c (counter)
+  PASS  lines after that are perfdata too
+  PASS  trailing empty fields (more=2;;) are null
+  PASS  simple perfdata after a plain summary
+
+## Failures are UNKNOWN with a reason, and never hide other checks
+
+  PASS  timeout: UNKNOWN
+  PASS  timeout: the reason says so
+  PASS  timeout: returned promptly (1s)
+  PASS  timeout: the next check still ran
+  PASS  timeout: overall exit 3 (UNKNOWN beats OK)
+  PASS  timeout: the plugin's child is killed too
+  PASS  exit 7: UNKNOWN, reason and output
+  PASS  killed by signal: UNKNOWN
+  PASS  missing plugin: reason
+  PASS  missing plugin: UNKNOWN
+  PASS  non-executable plugin: reason
+  PASS  symlink out of plugin_dir refused
+  PASS  plugin with a / (absolute) refused
+  PASS  plugin with a / (relative) refused
+  PASS  plugin named .. refused
+  PASS  one bad check does not hide the others
+  PASS  plugin_dir missing: the check is UNKNOWN, not a crash
+
+## Wrapper errors (exit 3, one JSON document with an error)
+
+  PASS  name 'nosuch': error, exit 3
+  PASS  name 'nosuch': exit 3 and valid JSON
+  PASS  name 'a/b': error, exit 3
+  PASS  name 'a/b': exit 3 and valid JSON
+  PASS  name '..': error, exit 3
+  PASS  name '..': exit 3 and valid JSON
+  PASS  name '../ok': error, exit 3
+  PASS  name '../ok': exit 3 and valid JSON
+  PASS  name '--bogus': error, exit 3
+  PASS  name '--bogus': exit 3 and valid JSON
+  PASS  name 'OK;id': error, exit 3
+  PASS  name 'OK;id': exit 3 and valid JSON
+  PASS  name 'ok ': error, exit 3
+  PASS  name 'ok ': exit 3 and valid JSON
+  PASS  name '': error, exit 3
+  PASS  name '': exit 3 and valid JSON
+  PASS  one unknown name stops the run before anything runs
+  PASS  ...and no check results
+  PASS  --list with names: exit 3
+  PASS  --all with names: exit 3
+  PASS  missing config: exit 3
+  PASS  missing config: names the file
+  PASS  bad config 'garbage': exit 3
+  PASS  bad config: error names the line
+  PASS  bad config 'ok = ': exit 3
+  PASS  bad config: error names the line
+  PASS  bad config 'timeout = abc': exit 3
+  PASS  bad config: error names the line
+  PASS  bad config 'timeout = 0': exit 3
+  PASS  bad config: error names the line
+  PASS  bad config 'bad name = ok_p': exit 3
+  PASS  bad config: error names the line
+  PASS  bad config 'dup = ok_p / dup = ok_p': exit 3
+  PASS  bad config: error names the line
+  PASS  bad config 'q = ok_p 'unterminated': exit 3
+  PASS  bad config: error names the line
+  PASS  bad config 'q = ok_p "unterminated': exit 3
+  PASS  bad config: error names the line
+  PASS  empty config, --all: exit 3
+
+## --list and the config format
+
+  PASS  --list: exit 0
+  PASS  --list: names in config order, settings are not checks
+  PASS  --list: only host and checks
+  PASS  spaces around = and no spaces both work: exit 0
+  PASS  both checks ran
+  PASS  default plugin_dir is /usr/lib/nagios/plugins
+
+## Argument splitting and no shell
+
+  PASS  quotes group words, adjacent pieces join, '' is an empty argument
+  PASS  shell metacharacters reach the plugin literally
+  PASS  nothing was executed by a shell
+  PASS  unquoted metacharacters are not run either
+  PASS  ...they are plain words
+
+## Real monitoring plugins
+
+  SKIP  real plugins: /usr/lib/nagios/plugins/check_load not installed (monitoring-plugins)
+
+## Job: nagios-checks.sh against a stub ctrl-exec-cli and logger
+
+  PASS  all OK: exit 0
+  PASS  all OK: one summary line, user.info
+  PASS  all OK: the summary is also printed
+  PASS  the CLI is asked with names only, one call per host
+  PASS  WARNING and CRITICAL: exit 1
+  PASS  WARNING line at user.warning
+  PASS  CRITICAL line at user.err
+  PASS  OK checks get no line
+  PASS  summary: worst state, counts, user.err
+  PASS  three lines in all (two checks plus summary)
+  PASS  WARNING only: summary at user.warning
+  PASS  unreachable agent: exit 1
+  PASS  unreachable agent: each of its checks is UNKNOWN with the reason
+  PASS  unreachable agent: counted
+  PASS  agent refuses the script: UNKNOWN with the agent's words
+  PASS  API error: UNKNOWN with the API's words
+  PASS  unreadable reply: UNKNOWN
+  PASS  agent lacks a requested check: wrapper error shown as UNKNOWN
+  PASS  NAGIOS_TAG sets the tag
+  PASS  NAGIOS_SCRIPT sets the agent script name
+  PASS  no check lines: exit 1
+  PASS  no check lines: status=unknown
+  PASS  check line without names: exit 1
+  PASS  check line without names: logged
+  PASS  missing job config: exit 1
+  PASS  missing job config: logged
+  PASS  example config: agent-03 asked for its check
+  PASS  example config: agent-01 asked for three checks
+  PASS  example config has a schedule
+  PASS  nagios-checks.sh is executable
+
+Results: 146 passed, 0 failed, 1 skipped
+VERDICT: PASS

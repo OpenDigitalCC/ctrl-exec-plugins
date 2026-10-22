@@ -1,0 +1,30 @@
+{
+  "version": "1",
+  "description": "Run named Nagios plugins on this host and return one JSON document: per check the state, summary, parsed performance data and long output, and the worst state overall. The caller names the checks; this host's nagios-checks.conf says which plugin and arguments each name runs, so no plugin arguments are accepted. Exit code is the overall state: 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN (also any wrapper error). Makes no changes of its own.",
+  "read_only": true,
+  "idempotent": true,
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "checks": {
+        "type": "array",
+        "description": "Names of the checks to run, as configured on the agent (see list). Run in the order given.",
+        "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+        "minItems": 1
+      },
+      "list": {
+        "type": "boolean",
+        "description": "List the check names this host offers instead of running any."
+      },
+      "all": {
+        "type": "boolean",
+        "description": "Run every check configured on this host."
+      }
+    }
+  },
+  "argv": [
+    { "arg": "list", "flag": "--list" },
+    { "arg": "all", "flag": "--all" },
+    { "arg": "checks", "repeat": true }
+  ]
+}

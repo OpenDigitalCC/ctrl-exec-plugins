@@ -1,0 +1,55 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "nagios-check",
+      "version": "0.1.0",
+      "description": "Run named Nagios plugins on a ctrl-exec agent and return their state and performance data as JSON"
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "nagios-check",
+      "version": "0.1.0",
+      "description": "Agent script (Perl): runs the plugins its nagios-checks.conf maps the caller's check names to"
+    },
+    {
+      "type": "application",
+      "name": "nagios-checks",
+      "version": "0.1.0",
+      "description": "Dispatcher-side run-jobs job: names the checks per agent and logs one syslog line per check that is not OK"
+    },
+    {
+      "type": "library",
+      "name": "perl-base",
+      "version": "5.36",
+      "description": "Core modules only: JSON::PP, POSIX, Time::HiRes, Cwd, Encode, Sys::Hostname",
+      "purl": "pkg:deb/debian/perl-base"
+    },
+    {
+      "type": "library",
+      "name": "monitoring-plugins-basic",
+      "version": "2.3",
+      "description": "The Nagios plugins the checks run (check_disk, check_load, check_procs and others); also monitoring-plugins-standard for check_http, check_ssl and more",
+      "purl": "pkg:deb/debian/monitoring-plugins-basic"
+    },
+    {
+      "type": "library",
+      "name": "bash",
+      "version": "5.2",
+      "description": "GNU Bourne Again shell, for the run-jobs job",
+      "purl": "pkg:deb/debian/bash"
+    },
+    {
+      "type": "library",
+      "name": "bsdutils",
+      "version": "2.38",
+      "description": "Provides logger(1) for the run-jobs job",
+      "purl": "pkg:deb/debian/bsdutils"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+# nagios-checks.conf - Nagios checks on agents (nagios-checks.sh)
+#
+# Copy to nagios-checks.conf next to nagios-checks.sh. One key per line.
+# Comments go on their own line only: a '#' after a value becomes part of the
+# value.
+#
+#   schedule = <cron expression>                  when run-jobs runs the job
+#   check    = <agent> <check-name> [<check-name> ...]
+#                                                 the checks to run on that agent
+#
+# Check names are the keys in the agent's nagios-checks.conf; list them with
+#   ctrl-exec-cli run <agent> --script nagios-check -- --list
+# Only names go over the wire. Thresholds, plugin and arguments are the
+# agent's own. One check line per agent; an agent can have its own set.
+
+schedule = */5 * * * *
+
+check = agent-01 disk_root load swap
+check = agent-02 disk_root load
+check = agent-03 http_example
