@@ -19,6 +19,12 @@
     },
     {
       "type": "application",
+      "name": "install.sh",
+      "version": "0.1.0",
+      "description": "Installer (bash): puts the script, check_mem and scripts.conf entry in place without overwriting host config; --dry-run reports only"
+    },
+    {
+      "type": "application",
       "name": "check_mem",
       "version": "0.1.0",
       "description": "Nagios plugin (bash): available memory as a percent of total, from /proc/meminfo; installed in /usr/local/lib/nagios/plugins"

@@ -552,6 +552,113 @@ fi
 [ -x "$JOB" ] && pass "nagios-checks.sh is executable" || fail "nagios-checks.sh is executable"
 
 # ---------------------------------------------------------------------------
+heading "install.sh (temp root, fake systemctl and runuser, no root needed)"
+
+INST="$DIR/install.sh"
+IB="$T/ibin"
+R="$T/iroot"
+mkdir -p "$IB"
+printf '#!/bin/bash\necho "$*" >> "$STUB_SYSTEMCTL_LOG"\nexit 0\n' > "$IB/systemctl"
+printf '#!/bin/bash\nshift 3\nNAGIOS_CHECKS_CONF="$NC_ROOT/etc/nagios-checks.conf" exec "$@"\n' > "$IB/runuser"
+chmod 755 "$IB/systemctl" "$IB/runuser"
+export STUB_SYSTEMCTL_LOG="$T/systemctl.log"
+
+# newroot [noplugins] [noscripts] [noexec]: a fresh agent host under $R
+newroot() {
+    rm -rf "$R"
+    mkdir -p "$R/etc/ctrl-exec-agent" "$R/usr/lib/nagios/plugins"
+    : > "$STUB_SYSTEMCTL_LOG"
+    printf '#!/bin/sh\n' > "$R/usr/lib/nagios/plugins/check_disk"
+    printf '# agent scripts\n' > "$R/etc/ctrl-exec-agent/scripts.conf"
+    printf 'executor_socket = /run/x.sock\n\n[profile default]\nrun_as = nobody\n' > "$R/etc/ctrl-exec-agent/agent.conf"
+    for o in "$@"; do
+        case "$o" in
+            noplugins) rm -f "$R/usr/lib/nagios/plugins/check_disk" ;;
+            noscripts) rm -f "$R/etc/ctrl-exec-agent/scripts.conf" ;;
+            noprofile) printf 'executor_socket = /run/x.sock\n' > "$R/etc/ctrl-exec-agent/agent.conf" ;;
+        esac
+    done
+}
+# inst ARGS...: runs the installer against $R; OUT holds its output, RC its exit
+inst() {
+    OUT="$(NC_ROOT="$R" NC_ALLOW_NONROOT=1 PATH="$IB:$PATH" bash "$INST" "$@" 2>&1 < /dev/null)"
+    RC=$?
+}
+
+newroot
+inst
+expect_eq "fresh install: exit 0" 0 "$RC"
+expect_has "fresh install: reports 4 changes" "$OUT" "done: 4 changed"
+[ -x "$R/opt/ctrl-exec-scripts/nagios-check.pl" ] && pass "fresh install: script installed 755" || fail "fresh install: script installed 755"
+cmp -s "$NC" "$R/opt/ctrl-exec-scripts/nagios-check.pl" && pass "fresh install: script is a copy of ours" || fail "fresh install: script is a copy of ours"
+[ -x "$R/usr/local/lib/nagios/plugins/check_mem" ] && pass "fresh install: check_mem installed" || fail "fresh install: check_mem installed"
+expect_eq "fresh install: config is 644" 644 "$(stat -c %a "$R/etc/nagios-checks.conf")"
+expect_has "fresh install: scripts.conf entry added" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")" "nagios-check = $R/opt/ctrl-exec-scripts/nagios-check.pl"
+expect_has "fresh install: agent reloaded" "$(cat "$STUB_SYSTEMCTL_LOG")" "reload ctrl-exec-agent"
+expect_has "fresh install: verify line printed" "$OUT" "verify as"
+
+: > "$STUB_SYSTEMCTL_LOG"
+inst
+expect_has "second run: nothing changed" "$OUT" "done: 0 changed"
+expect_lacks "second run: no changed line" "$OUT" "changed /"
+expect_eq "second run: no reload" "" "$(cat "$STUB_SYSTEMCTL_LOG")"
+expect_eq "second run: scripts.conf has one entry" 1 "$(grep -c '^nagios-check' "$R/etc/ctrl-exec-agent/scripts.conf")"
+
+echo "# my own checks" > "$R/etc/nagios-checks.conf"
+chmod 600 "$R/etc/nagios-checks.conf"
+echo "tampered" >> "$R/opt/ctrl-exec-scripts/nagios-check.pl"
+inst
+expect_eq "existing config: kept" "# my own checks" "$(cat "$R/etc/nagios-checks.conf")"
+cmp -s "$DIR/nagios-checks.conf.example" "$R/etc/nagios-checks.conf.new" && pass "existing config: shipped one in .new" || fail "existing config: shipped one in .new"
+expect_has "existing config: warned" "$OUT" "kept your"
+expect_has "existing config: mode fixed and said so" "$OUT" "mode set to 644"
+expect_eq "existing config: mode is 644" 644 "$(stat -c %a "$R/etc/nagios-checks.conf")"
+cmp -s "$NC" "$R/opt/ctrl-exec-scripts/nagios-check.pl" && pass "different script replaced" || fail "different script replaced"
+
+newroot
+echo "nagios-check = /srv/elsewhere/nagios-check" >> "$R/etc/ctrl-exec-agent/scripts.conf"
+inst
+expect_has "scripts.conf other path: warned with the path" "$OUT" "nagios-check = /srv/elsewhere/nagios-check"
+expect_eq "scripts.conf other path: left alone" 2 "$(wc -l < "$R/etc/ctrl-exec-agent/scripts.conf")"
+expect_eq "scripts.conf other path: no reload" "" "$(cat "$STUB_SYSTEMCTL_LOG")"
+
+newroot noscripts
+inst
+expect_eq "no scripts.conf: exit 1" 1 "$RC"
+expect_has "no scripts.conf: FAIL line" "$OUT" "FAIL"
+expect_has "no scripts.conf: says why" "$OUT" "ctrl-exec agent not installed?"
+
+newroot noplugins
+inst
+expect_eq "no plugins: still exit 0" 0 "$RC"
+expect_has "no plugins: warns" "$OUT" "install monitoring-plugins-basic"
+
+newroot noprofile
+inst
+expect_has "no default profile: warns" "$OUT" "no [profile default]"
+expect_has "no default profile: gives the snippet" "$OUT" "run_as = nobody"
+expect_eq "no default profile: agent.conf untouched" "executor_socket = /run/x.sock" "$(cat "$R/etc/ctrl-exec-agent/agent.conf")"
+
+newroot
+inst --dry-run
+expect_eq "dry-run: exit 0" 0 "$RC"
+expect_has "dry-run: says what would change" "$OUT" "changed installed $R/opt/ctrl-exec-scripts/nagios-check.pl (dry-run"
+expect_eq "dry-run: nothing written" "" "$(find "$R/opt" "$R/usr/local" "$R/etc/nagios-checks.conf" 2> /dev/null)"
+expect_eq "dry-run: scripts.conf untouched" "# agent scripts" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")"
+expect_eq "dry-run: no reload" "" "$(cat "$STUB_SYSTEMCTL_LOG")"
+
+newroot
+inst --script-dir /srv/scripts
+expect_has "--script-dir: used" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")" "nagios-check = $R/srv/scripts/nagios-check.pl"
+
+OUT="$(bash "$INST" 2>&1 < /dev/null)"; RC=$?
+if [ "$(id -u)" != 0 ]; then
+    expect_eq "non-root without --dry-run: exit 1" 1 "$RC"
+    expect_has "non-root without --dry-run: FAIL" "$OUT" "FAIL must run as root"
+fi
+shellcheck -x "$INST" > /dev/null 2>&1 && pass "install.sh is shellcheck clean" || { command -v shellcheck > /dev/null && fail "install.sh is shellcheck clean" || skip "shellcheck not installed"; }
+
+# ---------------------------------------------------------------------------
 echo
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
 if [ "$FAIL" -eq 0 ]; then echo "VERDICT: PASS"; else echo "VERDICT: FAIL"; fi

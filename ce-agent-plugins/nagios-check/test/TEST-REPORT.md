@@ -1,5 +1,5 @@
 # Test report: nagios-check (ce-agent-plugins)
-Generated: 2026-10-22T13:28:55Z
+Generated: 2026-10-22T15:03:46Z
 
 ## Contract: no arguments and the sidecar
 
@@ -242,5 +242,47 @@ Generated: 2026-10-22T13:28:55Z
   PASS  example config has a schedule
   PASS  nagios-checks.sh is executable
 
-Results: 204 passed, 0 failed, 1 skipped
+## install.sh (temp root, fake systemctl and runuser, no root needed)
+
+  PASS  fresh install: exit 0
+  PASS  fresh install: reports 4 changes
+  PASS  fresh install: script installed 755
+  PASS  fresh install: script is a copy of ours
+  PASS  fresh install: check_mem installed
+  PASS  fresh install: config is 644
+  PASS  fresh install: scripts.conf entry added
+  PASS  fresh install: agent reloaded
+  PASS  fresh install: verify line printed
+  PASS  second run: nothing changed
+  PASS  second run: no changed line
+  PASS  second run: no reload
+  PASS  second run: scripts.conf has one entry
+  PASS  existing config: kept
+  PASS  existing config: shipped one in .new
+  PASS  existing config: warned
+  PASS  existing config: mode fixed and said so
+  PASS  existing config: mode is 644
+  PASS  different script replaced
+  PASS  scripts.conf other path: warned with the path
+  PASS  scripts.conf other path: left alone
+  PASS  scripts.conf other path: no reload
+  PASS  no scripts.conf: exit 1
+  PASS  no scripts.conf: FAIL line
+  PASS  no scripts.conf: says why
+  PASS  no plugins: still exit 0
+  PASS  no plugins: warns
+  PASS  no default profile: warns
+  PASS  no default profile: gives the snippet
+  PASS  no default profile: agent.conf untouched
+  PASS  dry-run: exit 0
+  PASS  dry-run: says what would change
+  PASS  dry-run: nothing written
+  PASS  dry-run: scripts.conf untouched
+  PASS  dry-run: no reload
+  PASS  --script-dir: used
+  PASS  non-root without --dry-run: exit 1
+  PASS  non-root without --dry-run: FAIL
+  PASS  install.sh is shellcheck clean
+
+Results: 243 passed, 0 failed, 1 skipped
 VERDICT: PASS

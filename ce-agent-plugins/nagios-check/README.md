@@ -63,7 +63,46 @@ this plugin ships one, `plugins/check_mem` (see below).
 
 ## Installation
 
-On each agent, install the script and its configuration:
+### Install with install.sh
+
+`install.sh` does the manual steps below on an agent host. Copy this plugin folder to
+the host and run it as root:
+
+```bash
+sudo ./install.sh --dry-run
+sudo ./install.sh
+```
+
+`--script-dir DIR` sets where the agent script goes (default
+`/opt/ctrl-exec-scripts`; use `--script-dir /srv/scripts` where the scripts
+live there). `--dry-run` checks everything, says what would change and
+changes nothing; it runs as any user.
+
+It installs `nagios-check.pl` into the script directory and `check_mem` into
+`/usr/local/lib/nagios/plugins` (both root:root 755; a different copy of
+either is replaced, they are this plugin's own files), puts
+`nagios-checks.conf.example` at `/etc/nagios-checks.conf` when there is none,
+adds `nagios-check = <script-dir>/nagios-check.pl` to
+`/etc/ctrl-exec-agent/scripts.conf`, reloads the agent when that file changed,
+and finally runs `nagios-check.pl --list` as the user the check runs as to
+show which plugins are available. Each step prints one line: `ok`, `changed`,
+`skip`, `warn` or `FAIL`, then `done: N changed, N warnings`. A second run
+changes nothing.
+
+It never overwrites what the host already has. An existing
+`/etc/nagios-checks.conf` is kept and the shipped one is written beside it as
+`/etc/nagios-checks.conf.new` (only its mode is corrected, to 644, if the
+unprivileged user could not read it). An existing `nagios-check =` line in
+`scripts.conf` is left as it is, with a warning when it names another path.
+`agent.conf` is never edited: when the executor is enabled and there is no
+`[profile default]`, the installer prints the snippet to add
+(`[profile default]`, `run_as = nobody`, `no_new_privileges = yes`). It stops
+with FAIL when `scripts.conf` does not exist (agent not installed). A missing
+`monitoring-plugins-basic` is a warning.
+
+### Manual installation
+
+The same by hand:
 
 ```bash
 sudo install -o root -g root -m 755 nagios-check.pl /opt/ctrl-exec-scripts/nagios-check
