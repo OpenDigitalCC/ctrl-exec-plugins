@@ -1,0 +1,38 @@
+{
+  "version": "2",
+  "description": "Write a config file on this host from contents sent in the call. The caller sends a name and the contents (run input field content, so the script is declared input=fields in scripts.conf); this host's config-deploy.conf says which names exist, the absolute path, owner and mode each is written with, and the command that checks the new contents first. The caller cannot choose a path, owner or mode. Contents equal to the installed file change nothing (changed false). A write is staged beside the target, checked by the validate command if the map gives one, the old file is kept as <path>.prev, and the new one is renamed into place. Contents are limited to 1 MiB. Set test to true to do everything except the final rename and report would_change. Set list to true to list the names this host offers with the path, sha256, size, owner and mode of what is installed. Scripts are not a supported target.",
+  "read_only": false,
+  "destructive": true,
+  "idempotent": true,
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "list": {
+        "type": "boolean",
+        "description": "List the names this host offers, each with path, whether the file exists, sha256, size, owner, mode and whether a validate command is set. Changes nothing; the name and input are not used."
+      },
+      "test": {
+        "type": "boolean",
+        "description": "Stage and validate the contents but do not install them; reports would_change. Needs the input field content.",
+        "default": false
+      },
+      "name": {
+        "type": "string",
+        "description": "The config name, as listed in the agent's config-deploy.conf (see list).",
+        "pattern": "^[A-Za-z0-9_-]+$"
+      }
+    }
+  },
+  "argv": [
+    { "arg": "list", "flag": "--list" },
+    { "arg": "test", "flag": "--test" },
+    { "arg": "name" }
+  ],
+  "input": {
+    "mode": "fields",
+    "required": ["content"],
+    "fields": {
+      "content": { "description": "The full text of the file to install, at most 1 MiB. Not used when list is true." }
+    }
+  }
+}

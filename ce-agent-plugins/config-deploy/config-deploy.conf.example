@@ -1,0 +1,28 @@
+# config-deploy.conf - the files agent-config-deploy may write on this host
+#
+# Install as /etc/ctrl-exec-agent/config-deploy.conf, owned by root, mode 600
+# (the script refuses a map that is not root-owned or that anyone else can
+# write). One entry per line; comments go on their own line only.
+#
+#   <name> = <absolute path> [owner=<user>:<group>] [mode=<octal>] [validate=<command and args>]
+#
+#   name      what the caller asks for: letters, digits, _ and -
+#   path      absolute, no '..'; the folder must already exist. Never a path in
+#             /etc/ctrl-exec-agent or /etc/ctrl-exec-dispatcher, never this file.
+#   owner     default root:root
+#   mode      default 0644 (no setuid, setgid or sticky bits)
+#   validate  last on the line: the rest of it is the command, run without a
+#             shell, with {} replaced by the staged file. Exit 0 = accept. It
+#             runs as the user the script runs as, for at most 30 seconds.
+#
+# Files only. Scripts that run as root are deliberately not a target.
+# The folders named here must also be listed in the profile's writable =
+# (see the README).
+
+nagios-checks = /etc/nagios-checks/checks.conf owner=root:root mode=0644 validate=/opt/ctrl-exec-scripts/nagios-check.pl --check-config {}
+
+# A file with no validation, readable by one service group:
+# app-settings  = /etc/example-app/settings.conf owner=root:example-app mode=0640
+
+# Validated by the service's own syntax check:
+# web-vhost     = /etc/example-web/sites/example.com.conf mode=0644 validate=/usr/sbin/example-web --check-file {}

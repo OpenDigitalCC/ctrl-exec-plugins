@@ -1,0 +1,23 @@
+# config-push.conf - config files pushed to agents (config-push.sh)
+#
+# Copy to config-push.conf next to config-push.sh. One key per line. Comments
+# go on their own line only: a '#' after a value becomes part of the value.
+#
+#   push = <agent> <name> <source file>
+#
+# <name> is a key in the agent's config-deploy.conf (list them with
+#   ctrl-exec-cli run <agent> --script agent-config-deploy -- --list
+# ). <source file> is the local file to send; a relative path is taken from
+# the folder this file is in. The agent decides where the file goes, with what
+# owner and mode, and whether it passes its own check; only the name and the
+# contents go over the wire.
+#
+# There is no schedule line: run the job when a file has changed,
+#   ./config-push.sh            push every line
+#   ./config-push.sh --check    compare only, push nothing
+# A schedule = line can be added if run-jobs should push on a timer; unchanged
+# files cost one call and write nothing.
+
+push = agent-01 nagios-checks sources/nagios-checks.conf
+push = agent-02 nagios-checks sources/nagios-checks.conf
+push = agent-03 nagios-checks sources/nagios-checks.conf

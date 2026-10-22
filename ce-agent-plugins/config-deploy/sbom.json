@@ -1,0 +1,54 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "config-deploy",
+      "version": "0.1.0",
+      "description": "Write named config files on a ctrl-exec agent from contents sent by the dispatcher, within an agent-side map of allowed files"
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "agent-config-deploy",
+      "version": "0.1.0",
+      "description": "Agent script (Perl): writes the file its config-deploy.conf maps the caller's name to, validated, with the old file kept as .prev"
+    },
+    {
+      "type": "application",
+      "name": "install.sh",
+      "version": "0.1.0",
+      "description": "Installer (bash): puts the script, the map example and the scripts.conf entry in place without overwriting host config; --dry-run reports only"
+    },
+    {
+      "type": "application",
+      "name": "config-push",
+      "version": "0.1.0",
+      "description": "Dispatcher-side run-jobs job: pushes local source files to named config entries on agents, or checks them with --check"
+    },
+    {
+      "type": "library",
+      "name": "perl-base",
+      "version": "5.36",
+      "description": "Core modules only: JSON::PP, Digest::SHA, POSIX, Cwd, Encode, File::Basename, Fcntl, IO::Handle, Sys::Hostname, Time::HiRes",
+      "purl": "pkg:deb/debian/perl-base"
+    },
+    {
+      "type": "library",
+      "name": "bash",
+      "version": "5.2",
+      "description": "GNU Bourne Again shell, for install.sh and the run-jobs job",
+      "purl": "pkg:deb/debian/bash"
+    },
+    {
+      "type": "library",
+      "name": "bsdutils",
+      "version": "2.38",
+      "description": "Provides logger(1) for the run-jobs job",
+      "purl": "pkg:deb/debian/bsdutils"
+    }
+  ]
+}
