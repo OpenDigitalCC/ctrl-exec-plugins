@@ -74,6 +74,25 @@ if [ "$(id -u)" != 0 ] && [ -z "${CD_ALLOW_NONROOT:-}" ] && [ "$DRY" = 0 ]; then
     exit 1
 fi
 
+# 1b. script_dirs: an agent.conf that limits where scripts may live refuses
+#     ours anywhere else, so stop before changing anything
+SD="$(sed -n 's/^[[:space:]]*script_dirs[[:space:]]*=[[:space:]]*\([^#[:space:]]*\).*/\1/p' "$AGENT_DIR/agent.conf" 2> /dev/null | tail -n 1)"
+if [ -n "$SD" ]; then
+    inside=0
+    IFS=: read -r -a sd_list <<< "$SD"
+    for d in "${sd_list[@]}"; do
+        d="${d%/}"
+        case "$SCRIPT_DIR_HOST/" in "$d"/*) inside=1 ;; esac
+    done
+    if [ "$inside" = 1 ]; then
+        ok "$SCRIPT_DIR_HOST is under script_dirs ($SD)"
+    else
+        fail "$SCRIPT_DIR_HOST is not under agent.conf script_dirs ($SD): the agent would refuse the script there; run again with --script-dir set to one of those folders"
+        echo "done: $CHANGED changed, $WARNED warnings"
+        exit 1
+    fi
+fi
+
 # 2. our script
 put "$HERE/agent-config-deploy.pl" "$SCRIPT_DIR/agent-config-deploy.pl"
 

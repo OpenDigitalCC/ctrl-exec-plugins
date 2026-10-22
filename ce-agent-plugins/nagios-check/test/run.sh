@@ -685,6 +685,31 @@ inst() {
     RC=$?
 }
 
+# script_dirs in agent.conf
+newroot
+sed -i '1i script_dirs = /usr/local/lib/ctrl-exec-scripts:/srv/scripts/other' "$R/etc/ctrl-exec-agent/agent.conf"
+inst --script-dir /srv/scripts
+expect_eq "script_dirs excludes the dir: exit 1" 1 "$RC"
+expect_has "script_dirs excludes the dir: FAIL names the allowed folders" "$OUT" "FAIL /srv/scripts is not under agent.conf script_dirs (/usr/local/lib/ctrl-exec-scripts:/srv/scripts/other)"
+[ ! -e "$R/srv/scripts" ] && pass "script_dirs excludes the dir: nothing installed" || fail "script_dirs excludes the dir: nothing installed"
+expect_lacks "script_dirs excludes the dir: scripts.conf untouched" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")" "nagios-check"
+inst --script-dir /srv/scripts --dry-run
+expect_eq "script_dirs excludes the dir: dry-run fails too" 1 "$RC"
+inst --script-dir /usr/local/lib/ctrl-exec-scripts
+expect_eq "script_dirs includes the dir: exit 0" 0 "$RC"
+expect_has "script_dirs includes the dir: ok line" "$OUT" "ok /usr/local/lib/ctrl-exec-scripts is under script_dirs"
+newroot
+sed -i '1i script_dirs = /srv/scripts/other' "$R/etc/ctrl-exec-agent/agent.conf"
+inst --script-dir /srv/scripts/other/sub
+expect_eq "script_dirs: a subfolder of an allowed dir is accepted" 0 "$RC"
+newroot
+sed -i '1i script_dirs = /srv/scripts/other' "$R/etc/ctrl-exec-agent/agent.conf"
+inst --script-dir /srv/scripts/oth
+expect_eq "script_dirs: a name prefix is not a folder prefix" 1 "$RC"
+newroot
+inst --script-dir /srv/scripts
+expect_lacks "no script_dirs: no script_dirs line" "$OUT" "script_dirs"
+
 newroot
 inst
 expect_eq "fresh install: exit 0" 0 "$RC"

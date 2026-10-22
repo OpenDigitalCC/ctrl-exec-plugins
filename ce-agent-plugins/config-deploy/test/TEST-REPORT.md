@@ -1,5 +1,5 @@
 # Test report: config-deploy (ce-agent-plugins)
-Generated: 2026-10-22T17:56:30Z
+Generated: 2026-10-22T19:12:55Z
 
 ## Contract: usage, the script and the sidecar
 
@@ -397,6 +397,16 @@ Generated: 2026-10-22T17:56:30Z
 
 ## install.sh (temp root, fake systemctl, no root needed)
 
+  PASS  script_dirs excludes the dir: exit 1
+  PASS  script_dirs excludes the dir: FAIL names the allowed folders
+  PASS  script_dirs excludes the dir: nothing installed
+  PASS  script_dirs excludes the dir: scripts.conf untouched
+  PASS  script_dirs excludes the dir: dry-run fails too
+  PASS  script_dirs includes the dir: exit 0
+  PASS  script_dirs includes the dir: ok line
+  PASS  script_dirs: a subfolder of an allowed dir is accepted
+  PASS  script_dirs: a name prefix is not a folder prefix
+  PASS  no script_dirs: no script_dirs line
   PASS  fresh install: exit 0
   PASS  fresh install: reports 3 changes
   PASS  fresh install: script installed 755
@@ -440,5 +450,5 @@ Generated: 2026-10-22T17:56:30Z
   PASS  install.sh: unknown option exits 2
   PASS  install.sh is shellcheck clean
 
-Results: 403 passed, 0 failed, 0 skipped
+Results: 413 passed, 0 failed, 0 skipped
 VERDICT: PASS

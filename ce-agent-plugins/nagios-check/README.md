@@ -76,7 +76,10 @@ sudo ./install.sh
 `--script-dir DIR` sets where the agent script goes (default
 `/opt/ctrl-exec-scripts`; use `--script-dir /srv/scripts` where the scripts
 live there). `--dry-run` checks everything, says what would change and
-changes nothing; it runs as any user.
+changes nothing; it runs as any user. When `agent.conf` sets `script_dirs`,
+the script directory must be under one of them (the agent refuses a script
+anywhere else): otherwise the installer stops with `FAIL`, before changing
+anything, and names the folders allowed.
 
 It installs `nagios-check.pl` into the script directory and `check_mem` into
 `/usr/local/lib/nagios/plugins` (both root:root 755; a different copy of

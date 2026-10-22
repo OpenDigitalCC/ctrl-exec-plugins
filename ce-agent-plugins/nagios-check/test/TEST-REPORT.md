@@ -1,5 +1,5 @@
 # Test report: nagios-check (ce-agent-plugins)
-Generated: 2026-10-22T17:56:14Z
+Generated: 2026-10-22T19:12:42Z
 
 ## Contract: no arguments and the sidecar
 
@@ -320,6 +320,16 @@ Generated: 2026-10-22T17:56:14Z
 
 ## install.sh (temp root, fake systemctl and runuser, no root needed)
 
+  PASS  script_dirs excludes the dir: exit 1
+  PASS  script_dirs excludes the dir: FAIL names the allowed folders
+  PASS  script_dirs excludes the dir: nothing installed
+  PASS  script_dirs excludes the dir: scripts.conf untouched
+  PASS  script_dirs excludes the dir: dry-run fails too
+  PASS  script_dirs includes the dir: exit 0
+  PASS  script_dirs includes the dir: ok line
+  PASS  script_dirs: a subfolder of an allowed dir is accepted
+  PASS  script_dirs: a name prefix is not a folder prefix
+  PASS  no script_dirs: no script_dirs line
   PASS  fresh install: exit 0
   PASS  fresh install: reports 5 changes (script, check_mem, folder, config, scripts.conf)
   PASS  fresh install: script installed 755
@@ -384,5 +394,5 @@ Generated: 2026-10-22T17:56:14Z
   PASS  non-root without --dry-run: FAIL
   PASS  install.sh is shellcheck clean
 
-Results: 337 passed, 0 failed, 1 skipped
+Results: 347 passed, 0 failed, 1 skipped
 VERDICT: PASS
