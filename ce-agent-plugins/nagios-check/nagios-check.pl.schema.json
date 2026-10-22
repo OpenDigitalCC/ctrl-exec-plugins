@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "description": "Run named Nagios plugins on this host and return one JSON document: per check the state, summary, parsed performance data and long output, and the worst state overall. The caller names the checks; this host's nagios-checks.conf says which plugin and arguments each name runs, so no plugin arguments are accepted. Exit code is the overall state: 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN (also any wrapper error). Makes no changes of its own.",
+  "description": "Run named Nagios plugins on this host and return one JSON document: per check the state, summary, parsed performance data and long output, and the worst state overall. The caller names the checks; this host's nagios-checks.conf says which plugin and arguments each name runs, so no plugin arguments are accepted. Checks run one after another within a run budget (default 50 s), each check capped at its timeout (default 10 s); a check the budget cannot cover is UNKNOWN \"not run\", and a \"warning\" field appears when the timeouts add up to more than the budget. Exit code is the overall state: 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN (also any wrapper error). Makes no changes of its own.",
   "read_only": true,
   "idempotent": true,
   "arguments": {
@@ -14,7 +14,7 @@
       },
       "list": {
         "type": "boolean",
-        "description": "List the check names this host offers instead of running any."
+        "description": "List the checks this host offers, each with the plugin name and whether that plugin is available (available, and a reason when not), instead of running any. Exits 3 when any plugin is not available."
       },
       "all": {
         "type": "boolean",

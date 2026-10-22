@@ -36,7 +36,7 @@ agent decides **how**.
 | Which checks run | the caller | the names given as arguments on each run |
 | When they run | the caller | its own schedule (a run-jobs job, cron, a person) |
 | Which plugin and arguments a name means | the agent | `nagios-checks.conf` on the agent |
-| Thresholds, paths, plugin directory, timeout | the agent | `nagios-checks.conf` on the agent |
+| Thresholds, paths, plugin directories, timeout, run budget | the agent | `nagios-checks.conf` on the agent |
 
 The script sends nothing to a plugin that the agent's own file did not
 contain. The caller can only choose among the names the agent offers; it
@@ -55,8 +55,10 @@ fails. `--all` is an explicit request for every configured check.
 | `ctrl-exec-cli`, `perl`, `logger` | the run-jobs image | `run-jobs/nagios-checks.sh` |
 | `bash` | both | `test/run.sh` and the job |
 
-The plugins live in `/usr/lib/nagios/plugins` on Debian and Ubuntu. Other
-layouts set `plugin_dir`.
+The plugins live in `/usr/lib/nagios/plugins` on Debian and Ubuntu; plugins
+you add yourself can go in `/usr/local/lib/nagios/plugins`, which is searched
+too. Other layouts set `plugin_dir`. `monitoring-plugins` has no memory check;
+this plugin ships one, `plugins/check_mem` (see below).
 
 
 ## Installation
@@ -65,11 +67,19 @@ On each agent, install the script and its configuration:
 
 ```bash
 sudo install -o root -g root -m 755 nagios-check.pl /opt/ctrl-exec-scripts/nagios-check
-sudo install -o root -g root -m 644 nagios-checks.conf /etc/ctrl-exec-agent/nagios-checks.conf
+sudo install -o root -g root -m 644 nagios-checks.conf /etc/nagios-checks.conf
 ```
 
 Keep both owned by root and not writable by others: the configuration
-decides what the script executes.
+decides what the script executes. The script normally runs as an unprivileged
+`run_as` user (see scripts.conf below), so the configuration must be readable
+by that user: root-owned, mode 644. It is not under `/etc/ctrl-exec-agent`
+because that directory is mode 750 and the unprivileged user cannot enter it.
+When the file cannot be read, the error names the user that tried
+(`cannot read config /etc/nagios-checks.conf as user nobody: Permission denied`).
+
+`nagios-checks.conf.example` is a standard set of checks for a Debian host
+(disk, load, mem, swap, zombies, procs): copy it and adjust the thresholds.
 
 On the dispatcher, copy `run-jobs/nagios-checks.sh` and a
 `nagios-checks.conf` (from `nagios-checks.conf.example`) into the run-jobs
@@ -77,13 +87,14 @@ scripts folder.
 
 ### nagios-checks.conf (agent)
 
-Default path `/etc/ctrl-exec-agent/nagios-checks.conf`; the environment
+Default path `/etc/nagios-checks.conf`; the environment
 variable `NAGIOS_CHECKS_CONF` overrides it (the tests use this).
 
 ```ini
-# Settings (both optional)
-plugin_dir = /usr/lib/nagios/plugins
-timeout    = 30
+# Settings (all optional)
+plugin_dir = /usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins
+timeout    = 10
+budget     = 50
 
 # Checks: name = plugin and its fixed arguments
 disk_root  = check_disk -w 20% -c 10% -p /
@@ -97,16 +108,23 @@ cert       = check_http -H www.example.com -S -C 21,7
 Comments go on their own line only.
 
 Settings and checks
-: `plugin_dir` and `timeout` are the two reserved keys. Every other key is a
-  check name, so those two words cannot be check names. A name is letters,
+: `plugin_dir`, `timeout` and `budget` are the reserved keys. Every other key
+  is a check name, so those three words cannot be check names. A name is letters,
   digits, `_` and `-`. Names are unique; a repeated name is an error.
 
 `plugin_dir`
-: The directory the plugins are in. Default `/usr/lib/nagios/plugins`.
+: The directories the plugins are in, separated by `:` and searched in order;
+  the first directory that has the file wins. Default
+  `/usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins`, so plugins added
+  locally need no write access to the package's directory.
 
 `timeout`
-: Seconds each check may run. Default 30. When it expires the plugin's whole
+: Seconds each check may run. Default 10. When it expires the plugin's whole
   process group is killed and the check is UNKNOWN.
+
+`budget`
+: Seconds one run (one call of the script) may take in all. A whole number of
+  at least 1; default 50. See Run budget below.
 
 Check value
 : The first word is the plugin: a file name in `plugin_dir`, with no `/`. The
@@ -122,8 +140,63 @@ an `error` naming the file and line.
 
 Each plugin is started by `exec` of the resolved path. The plugin name must
 contain no `/`, and the path, after resolving symlinks, must be inside
-`plugin_dir`; a symlink that leads elsewhere is refused. A check that fails
-either test is UNKNOWN and the other checks still run.
+the `plugin_dir` directory it was found in; a symlink that leads elsewhere is
+refused. A check that fails either test, or whose plugin is missing or not
+executable, is UNKNOWN at once and the other checks still run. The summary
+names the plugin and the directories searched, for example
+`check_mem: plugin not found in /usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins`.
+
+### Run budget
+
+The checks in one call run one after another, and the dispatcher waits for the
+whole call at most its `read_timeout` (default 60 s). If the call is still
+running then, the dispatcher gives up and every check on that host is lost,
+including those that had finished (logged UNKNOWN "read timeout"). The
+`budget` makes sure a reply always comes back first: keep it **below the
+dispatcher's `read_timeout`** (50 against 60 by default).
+
+- Each check gets the smaller of its `timeout` and the budget left. A check cut
+  short this way reports `timed out after 1s (run budget)`.
+- A check that cannot start because the budget is spent is UNKNOWN with the
+  summary `not run: run budget of 50s spent` and a duration of 0.
+- When the timeouts of the selected checks add up to more than the budget
+  (six checks at 10 s are 60 s), the JSON has a top-level `warning` and the
+  same text goes to stderr; the JSON on stdout stays one valid document:
+
+  ```json
+  {"host":"agent-01","warning":"check timeouts add up to 70s, over the 50s budget; split the checks over several calls or lower timeout", ...}
+  ```
+
+The sum counts every check at its full timeout, although most finish at once;
+it is a bound, not a forecast. Split local checks (disk, load, mem, swap,
+procs: quick) from network checks (http, ssl, ping, dns: can wait for their
+timeout) into separate calls, so a slow network check cannot starve the local
+ones and each call has its own budget. In the job that is two `check =` lines
+for the same agent.
+
+### check_mem
+
+`plugins/check_mem` is a small bash plugin: available memory as a percent of
+total, from `MemTotal` and `MemAvailable` in `/proc/meminfo`.
+
+```bash
+sudo install -o root -g root -m 755 plugins/check_mem /usr/local/lib/nagios/plugins/check_mem
+```
+
+```
+check_mem [-w <pct>] [-c <pct>]
+```
+
+WARNING when available memory is below `-w` percent of total, CRITICAL below
+`-c` (defaults 10 and 5; `-w` must not be below `-c`). Exit 0, 1, 2, or 3 with
+an UNKNOWN line on bad arguments or when `MemAvailable` is missing:
+
+```
+MEM OK - 62% available (9.8 GiB of 15.6 GiB) | available=10522MB;1597;798;0;15972 available_pct=62%;10;5;0;100
+```
+
+The variable `CHECK_MEM_MEMINFO` names a file to read instead of
+`/proc/meminfo`. It is for the tests only; leave it unset.
 
 
 ## scripts.conf
@@ -167,13 +240,18 @@ The arguments are check names, or one of two options.
   stops the run before anything executes.
 
 `nagios-check --list`
-: Print the names this host offers, so a caller can see what to ask for:
+: Print the checks this host offers and whether each plugin can be run, so a
+  caller can see before running:
 
   ```json
-  {"checks":["disk_root","load","swap"],"host":"agent-01"}
+  {"host":"agent-01","checks":[
+    {"name":"disk","plugin":"check_disk","available":true},
+    {"name":"mem","plugin":"check_mem","available":false,"reason":"plugin not found in /usr/lib/nagios/plugins"}]}
   ```
 
-  The plugins and arguments are not listed; they are the agent's business.
+  Only the plugin name is shown, not its arguments; those are the agent's
+  business. Exit 0 when every plugin is available, 3 when any is not (missing,
+  not executable, or outside `plugin_dir`).
 
 `nagios-check --all`
 : Run every configured check. An explicit request; a run with no arguments is
@@ -237,10 +315,14 @@ template).
 schedule = */5 * * * *
 check    = agent-01 disk_root load swap
 check    = agent-02 disk_root load
+check    = agent-03 disk load mem
+check    = agent-03 web_health ping_gateway
 ```
 
-The schedule is the caller's timing; each `check =` line is one agent and the
-names to ask it for. For each line the job runs
+The schedule is the caller's timing; each `check =` line is one call to one
+agent with the names to ask it for. An agent can have several lines: they are
+separate calls, each with its own run budget, which is how to split local
+checks from network checks (agent-03 above). For each line the job runs
 
 ```bash
 ctrl-exec-cli --json run agent-01 --script nagios-check -- disk_root load swap
@@ -311,24 +393,27 @@ NAGIOS_CHECKS_CONF=./nagios-checks.conf ./nagios-check.pl load; echo $?
 bash test/run.sh | tee test/TEST-REPORT.md
 ```
 
-The suite uses fake plugins in a temporary folder (small shell scripts) and
-a stub `ctrl-exec-cli` and `logger` for the job. When `monitoring-plugins` is
+The suite uses fake plugins in a temporary folder (small shell scripts), a
+fake meminfo for `check_mem`, and a stub `ctrl-exec-cli` and `logger` for the
+job. When `monitoring-plugins` is
 installed it also runs a real `check_load` and `check_disk`; otherwise that
 section is skipped. It needs `perl` and `bash`, no network and no root, and
-each timeout test waits one second.
+each timeout test waits one or two seconds.
 
 
 ## Limitations
 
-- Checks run one after another. The dispatcher waits for the whole run, and
-  its `read_timeout` (default 60 s) applies, so the checks in one call should
-  add up to less than that; split a long list across calls, or raise
-  `read_timeout`.
+- Checks run one after another, within the run budget (default 50 s) that
+  keeps the whole call under the dispatcher's `read_timeout` (default 60 s).
+  Checks whose timeouts add up to more than the budget may be reported "not
+  run"; split them across calls, lower `timeout`, or raise both `budget` and
+  `read_timeout` (keeping the budget below the read timeout).
 - The plugin's stderr is merged with its stdout, and each check's output is
   read up to 64 KiB.
-- A symlink in `plugin_dir` that resolves outside it is refused, so a plugin
-  that is a link into another directory (some distributions do this) has to be
-  reached through a `plugin_dir` that contains the real file.
+- A symlink in a `plugin_dir` directory that resolves outside that directory
+  is refused, so a plugin that is a link into another directory (some
+  distributions do this) has to be reached through a `plugin_dir` entry that
+  contains the real file.
 - The plugin runs with no standard input, `LC_ALL=C`, and the environment the
   agent gives the script (`PATH` is set if the agent gave none). Plugins that
   need other variables are not supported.

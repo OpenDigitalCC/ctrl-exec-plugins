@@ -19,6 +19,12 @@
     },
     {
       "type": "application",
+      "name": "check_mem",
+      "version": "0.1.0",
+      "description": "Nagios plugin (bash): available memory as a percent of total, from /proc/meminfo; installed in /usr/local/lib/nagios/plugins"
+    },
+    {
+      "type": "application",
       "name": "nagios-checks",
       "version": "0.1.0",
       "description": "Dispatcher-side run-jobs job: names the checks per agent and logs one syslog line per check that is not OK"

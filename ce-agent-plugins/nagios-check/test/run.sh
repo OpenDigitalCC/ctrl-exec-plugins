@@ -7,12 +7,17 @@
 #     U, perfdata continued in the long output
 #   - timeout (the plugin's process group is killed), missing, non-executable,
 #     exit 7, signal death, a plugin or name that tries to leave plugin_dir
-#   - config parsing, argument splitting, no shell interpretation, --list
+#   - config parsing, argument splitting, no shell interpretation
+#   - --list availability and exit code, plugin_dir with several directories
+#   - the run budget: capping, "not run", the warning field, default timeout
+#   - the unreadable-config message
+#   - plugins/check_mem against a fake meminfo (CHECK_MEM_MEMINFO)
 #   - nagios-checks.sh: end to end against a STUB ctrl-exec-cli (which runs the
 #     real wrapper over fake plugins) and a STUB logger
 # Plugins are small shell scripts in a temp plugin_dir. The real monitoring
 # plugins run too when /usr/lib/nagios/plugins exists; otherwise that section
-# is skipped. Needs perl and bash only, no network, no root; timeouts are 1 s.
+# is skipped. Needs perl and bash only, no network, no root; timeouts are 1 s
+# and the load on the host is nil (no check runs longer than the budget test).
 # shellcheck disable=SC2015,SC2016  # A && pass || fail is intended; fake plugins are quoted on purpose
 set -u
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -104,7 +109,7 @@ perl -MJSON::PP -e 'open my $f, "<", $ARGV[0] or exit 1; local $/; my $d = decod
     || fail "schema sidecar is valid JSON with arguments, argv and read_only"
 perl -c "$NC" > /dev/null 2>&1 && pass "perl -c passes" || fail "perl -c passes"
 n="$(wc -l < "$NC")"
-[ "$n" -le 260 ] && pass "wrapper stays small ($n lines)" || fail "wrapper stays small" "$n lines"
+[ "$n" -le 280 ] && pass "wrapper stays small ($n lines)" || fail "wrapper stays small" "$n lines"
 
 # ---------------------------------------------------------------------------
 heading "State mapping and the overall state"
@@ -239,7 +244,16 @@ expect_eq "--all with names: exit 3" 3 "$RC"
 NAGIOS_CHECKS_CONF="$T/absent.conf" nc ok
 expect_eq "missing config: exit 3" 3 "$RC"
 expect_has "missing config: names the file" "$OUT" "absent.conf"
-for body in "garbage" "ok = " "timeout = abc" "timeout = 0" "bad name = ok_p" "dup = ok_p
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ok = ok_p" > "$T/locked.conf"
+    chmod 000 "$T/locked.conf"
+    NAGIOS_CHECKS_CONF="$T/locked.conf" nc ok
+    expect_eq "unreadable config: exit 3" 3 "$RC"
+    expect_has "unreadable config: names the user that could not read it" "$OUT" "as user $(id -un):"
+else
+    skip "unreadable config: running as root, the file cannot be made unreadable"
+fi
+for body in "garbage" "ok = " "timeout = abc" "timeout = 0" "budget = 0" "budget = 1.5" "bad name = ok_p" "dup = ok_p
 dup = ok_p" "q = ok_p 'unterminated" 'q = ok_p "unterminated'; do
     printf '%s\n' "$body" > "$CONF"
     nc --list
@@ -256,15 +270,18 @@ heading "--list and the config format"
 conf "# a comment" "" "  disk_root   =   ok_p  " "load=ok_p" "plugin_dir = $P" "timeout = 5"
 nc --list
 expect_eq "--list: exit 0" 0 "$RC"
-jis "--list: names in config order, settings are not checks" '$d->{checks}' '["disk_root","load"]'
+jis "--list: names in config order, settings are not checks" '[map { $_->{name} } @{$d->{checks}}]' '["disk_root","load"]'
 jis "--list: only host and checks" '[sort keys %$d]' '["checks","host"]'
+jis "--list: plugin name and availability, no arguments" '$d->{checks}[0]' '{"available":true,"name":"disk_root","plugin":"ok_p"}'
 nc disk_root load
 expect_eq "spaces around = and no spaces both work: exit 0" 0 "$RC"
 jis "both checks ran" 'scalar @{$d->{checks}}' 2
-perl -e 'print "plugin_dir = /usr/lib/nagios/plugins\n"' > "$T/defaults.conf"
-echo "ok = ok_p" >> "$T/defaults.conf"
+echo "ok = ok_p -x" > "$T/defaults.conf"
 NAGIOS_CHECKS_CONF="$T/defaults.conf" nc ok
-expect_has "default plugin_dir is /usr/lib/nagios/plugins" "$OUT" "/usr/lib/nagios/plugins/ok_p"
+expect_has "default plugin_dir: both Debian directories, in order, named in the summary" "$OUT" "ok_p: plugin not found in /usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins"
+NAGIOS_CHECKS_CONF="$T/defaults.conf" nc --list
+jis "--list names the plugin and the directories searched" '$d->{checks}[0]{reason}' '"plugin not found in /usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins"'
+expect_eq "default config path is /etc/nagios-checks.conf" "1" "$(grep -c "'/etc/nagios-checks.conf'" "$NC")"
 
 # ---------------------------------------------------------------------------
 heading "Argument splitting and no shell"
@@ -283,6 +300,128 @@ conf "bare = args_p \$(touch $SENT) ; \`touch $SENT\` > $SENT"
 nc bare
 [ -e "$SENT" ] && fail "unquoted metacharacters are not run either" "sentinel exists" || pass "unquoted metacharacters are not run either"
 expect_has "...they are plain words" "$OUT" '[;]'
+
+# ---------------------------------------------------------------------------
+heading "Run budget, default timeout and the warning"
+
+# Default timeout is 10 s: six checks add up to 60 s, five to 50 s (= budget 50).
+{ echo "plugin_dir = $P"; for n in 1 2 3 4 5 6; do echo "c$n = ok_p"; done; } > "$CONF"
+nc c1 c2 c3 c4 c5 c6
+jis "default timeout 10: six checks add up to 60s, over the default budget of 50s" '$d->{warning}' \
+    '"check timeouts add up to 60s, over the 50s budget; split the checks over several calls or lower timeout"'
+expect_has "the warning is also on stderr" "$ERR" "check timeouts add up to 60s"
+is_json && pass "with a warning, stdout is still one JSON document" || fail "with a warning, stdout is still one JSON document" "$OUT"
+jis "with a warning the checks still ran" '[$d->{state}, scalar @{$d->{checks}}]' '["OK",6]'
+nc c1 c2 c3 c4 c5
+expect_lacks "five checks (50s) fit the default budget: no warning field" "$OUT" '"warning"'
+expect_eq "...and nothing on stderr" "" "$ERR"
+
+# budget 1 s, timeout 5 s: the slow check is capped at the budget, the rest are not run
+conf "slow = slow_p" "ok = ok_p" "ok2 = ok_p" "timeout = 5" "budget = 1"
+nc slow ok ok2
+is_json && pass "budget spent: stdout is one JSON document" || fail "budget spent: stdout is one JSON document" "$OUT"
+jis "effective timeout is capped by the budget left" '$d->{checks}[0]{summary}' '"timed out after 1s (run budget)"'
+jis "a check that cannot start is UNKNOWN 'not run' with duration 0" \
+    '[map { ($_->{state}, $_->{summary}, $_->{duration_ms}) } @{$d->{checks}}[1,2]]' \
+    '["UNKNOWN","not run: run budget of 1s spent",0,"UNKNOWN","not run: run budget of 1s spent",0]'
+jis "the reply still comes back: three checks, overall UNKNOWN" '[scalar @{$d->{checks}}, $d->{state}]' '[3,"UNKNOWN"]'
+jis "timeouts (15s) over the budget: warning names both" '$d->{warning}' \
+    '"check timeouts add up to 15s, over the 1s budget; split the checks over several calls or lower timeout"'
+conf "ok = ok_p" "budget = 2"
+nc ok
+expect_lacks "a fast check within budget is untouched" "$OUT" "not run"
+conf "ok = ok_p" "budget = 0"
+nc ok
+expect_has "budget must be a whole number >= 1" "$OUT" "budget must be a whole number"
+
+# ---------------------------------------------------------------------------
+heading "--list availability and plugin_dir with several directories"
+
+conf "ok = ok_p -w 5" "missing = nothing_here_p" "notexec = notexec_p" "symlink = escape_p"
+nc --list
+expect_eq "--list with unavailable plugins: exit 3" 3 "$RC"
+jis "--list: available and unavailable, plugin name only" '[map { $_->{name} . ":" . $_->{plugin} . ":" . ($_->{available} ? 1 : 0) } @{$d->{checks}}]' \
+    '["ok:ok_p:1","missing:nothing_here_p:0","notexec:notexec_p:0","symlink:escape_p:0"]'
+jis "--list: reason for a missing plugin" '$d->{checks}[1]{reason}' "\"plugin not found in $P\""
+expect_has "--list: reason for a non-executable plugin" "$(jv '$d->{checks}[2]{reason}')" "plugin not executable"
+expect_has "--list: reason for a link that leaves plugin_dir" "$(jv '$d->{checks}[3]{reason}')" "outside plugin_dir"
+jis "--list: an available check has no reason and shows no arguments" '[exists $d->{checks}[0]{reason} ? 1 : 0, exists $d->{checks}[0]{args} ? 1 : 0]' '[0,0]'
+nc missing
+expect_has "run: the summary names the plugin" "$(jv '$d->{checks}[0]{summary}')" "nothing_here_p: plugin not found in $P"
+conf "ok = ok_p" "dup = dup_p"
+plugin dup_p 'echo "OK - first dir"'
+nc --list
+expect_eq "--list when all are available: exit 0" 0 "$RC"
+
+P2="$T/plugins2"
+mkdir -p "$P2"
+printf '#!/bin/bash\n%s\n' 'echo "OK - second dir"' > "$P2/dup_p"
+printf '#!/bin/bash\n%s\n' 'echo "OK - only in second"' > "$P2/second_p"
+chmod 755 "$P2/dup_p" "$P2/second_p"
+ln -s "$P/ok_p" "$P2/link_p"
+printf '%s\n' "plugin_dir = $P:$P2" "timeout = 1" "dup = dup_p" "second = second_p" "link = link_p" "none = none_p" > "$CONF"
+nc dup second link none
+jis "several dirs: the first match wins" '$d->{checks}[0]{summary}' '"OK - first dir"'
+jis "several dirs: a plugin only in a later dir is found" '$d->{checks}[1]{summary}' '"OK - only in second"'
+expect_has "containment is checked against the dir the plugin was found in" "$(jv '$d->{checks}[2]{summary}')" "outside plugin_dir"
+expect_has "not found: every dir is named" "$(jv '$d->{checks}[3]{summary}')" "none_p: plugin not found in $P:$P2"
+printf '%s\n' "plugin_dir = $P2:$P" "timeout = 1" "dup = dup_p" > "$CONF"
+nc dup
+jis "several dirs: order decides (reversed)" '$d->{checks}[0]{summary}' '"OK - second dir"'
+
+# ---------------------------------------------------------------------------
+heading "check_mem"
+
+CM="$DIR/plugins/check_mem"
+MI="$T/meminfo"
+# mem KB_TOTAL KB_AVAILABLE ARGS...: runs check_mem on a fake meminfo
+mem() {
+    printf 'MemTotal:       %s kB\nMemFree:        1000 kB\nMemAvailable:   %s kB\n' "$1" "$2" > "$MI"
+    shift 2
+    OUT="$(CHECK_MEM_MEMINFO="$MI" bash "$CM" "$@" 2>&1)"
+    RC=$?
+}
+[ -x "$CM" ] && pass "check_mem is executable" || fail "check_mem is executable"
+mem 16000000 10000000
+expect_eq "62% available: exit 0" 0 "$RC"
+expect_has "OK output with sizes" "$OUT" "MEM OK - 62% available (9.5 GiB of 15.3 GiB) |"
+expect_has "perfdata in MB with warn/crit/min/max" "$OUT" "available=9765MB;1562;781;0;15625 available_pct=62%;10;5;0;100"
+mem 16000000 1200000
+expect_eq "7% available, defaults: WARNING exit 1" 1 "$RC"
+expect_has "WARNING output" "$OUT" "MEM WARNING - 7% available"
+mem 16000000 400000
+expect_eq "2% available, defaults: CRITICAL exit 2" 2 "$RC"
+expect_has "CRITICAL output" "$OUT" "MEM CRITICAL - 2% available"
+mem 16000000 3200000 -w 25 -c 10
+expect_eq "20% with -w 25 -c 10: WARNING" 1 "$RC"
+mem 16000000 1600000 -w 25 -c 10
+expect_eq "10% with -w 25 -c 10: WARNING (CRITICAL is below the limit)" 1 "$RC"
+mem 16000000 1500000 -w 25 -c 10
+expect_eq "9% with -w 25 -c 10: CRITICAL" 2 "$RC"
+mem 16000000 10000000 -w abc
+expect_eq "bad -w: UNKNOWN exit 3" 3 "$RC"
+expect_has "bad -w: says UNKNOWN" "$OUT" "MEM UNKNOWN"
+mem 16000000 10000000 -w 5 -c 10
+expect_eq "-w below -c: UNKNOWN" 3 "$RC"
+mem 16000000 10000000 -x
+expect_eq "unknown option: UNKNOWN" 3 "$RC"
+mem 16000000 10000000 extra
+expect_eq "stray argument: UNKNOWN" 3 "$RC"
+printf 'MemTotal: 16000000 kB\nMemFree: 1000 kB\n' > "$MI"
+OUT="$(CHECK_MEM_MEMINFO="$MI" bash "$CM" 2>&1)"
+RC=$?
+expect_eq "no MemAvailable: exit 3" 3 "$RC"
+expect_has "no MemAvailable: UNKNOWN names it" "$OUT" "MEM UNKNOWN - no MemAvailable"
+OUT="$(CHECK_MEM_MEMINFO="$T/nonexistent" bash "$CM" 2>&1)"
+RC=$?
+expect_eq "no meminfo file: exit 3" 3 "$RC"
+OUT="$(bash "$CM" 2>&1)"
+RC=$?
+[ "$RC" -le 2 ] && pass "real /proc/meminfo: exit $RC" || fail "real /proc/meminfo" "exit $RC: $OUT"
+printf '%s\n' "plugin_dir = $DIR/plugins" "timeout = 5" "mem = check_mem -w 1 -c 1" > "$CONF"
+printf "MemTotal: 16000000 kB\nMemAvailable: 10000000 kB\n" > "$MI"
+CHECK_MEM_MEMINFO="$MI" nc mem
+jis "through the wrapper: perfdata parsed" '[$d->{checks}[0]{perfdata}[1]{label}, $d->{checks}[0]{perfdata}[1]{uom}]' '["available_pct","%"]'
 
 # ---------------------------------------------------------------------------
 heading "Real monitoring plugins"
@@ -400,9 +539,12 @@ if [ -f "$JOBCONF_EXAMPLE" ]; then
     echo "x" > "$F/agent-01.fail"
     echo "x" > "$F/agent-02.fail"
     echo "x" > "$F/agent-03.fail"
+    echo "x" > "$F/agent-04.fail"
     NAGIOS_JOB_CONF="$JOBCONF_EXAMPLE" job
     expect_has "example config: agent-03 asked for its check" "$CALLS" "run agent-03 --script nagios-check -- http_example"
     expect_has "example config: agent-01 asked for three checks" "$CALLS" "run agent-01 --script nagios-check -- disk_root load swap"
+    expect_has "example config: one agent, local and network checks in separate calls" "$CALLS" "run agent-04 --script nagios-check -- disk load mem"
+    expect_has "example config: ...the second call" "$CALLS" "run agent-04 --script nagios-check -- web_health ping_gateway"
     grep -q '^schedule *= *\*/5 \* \* \* \*$' "$JOBCONF_EXAMPLE" && pass "example config has a schedule" || fail "example config has a schedule"
 else
     fail "nagios-checks.conf.example exists"

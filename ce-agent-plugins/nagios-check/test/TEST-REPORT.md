@@ -1,5 +1,5 @@
 # Test report: nagios-check (ce-agent-plugins)
-Generated: 2026-10-22T12:48:16Z
+Generated: 2026-10-22T13:28:55Z
 
 ## Contract: no arguments and the sidecar
 
@@ -11,7 +11,7 @@ Generated: 2026-10-22T12:48:16Z
   PASS  nagios-check.pl has a perl shebang
   PASS  schema sidecar is valid JSON with arguments, argv and read_only
   PASS  perl -c passes
-  PASS  wrapper stays small (220 lines)
+  PASS  wrapper stays small (265 lines)
 
 ## State mapping and the overall state
 
@@ -103,6 +103,8 @@ Generated: 2026-10-22T12:48:16Z
   PASS  --all with names: exit 3
   PASS  missing config: exit 3
   PASS  missing config: names the file
+  PASS  unreadable config: exit 3
+  PASS  unreadable config: names the user that could not read it
   PASS  bad config 'garbage': exit 3
   PASS  bad config: error names the line
   PASS  bad config 'ok = ': exit 3
@@ -110,6 +112,10 @@ Generated: 2026-10-22T12:48:16Z
   PASS  bad config 'timeout = abc': exit 3
   PASS  bad config: error names the line
   PASS  bad config 'timeout = 0': exit 3
+  PASS  bad config: error names the line
+  PASS  bad config 'budget = 0': exit 3
+  PASS  bad config: error names the line
+  PASS  bad config 'budget = 1.5': exit 3
   PASS  bad config: error names the line
   PASS  bad config 'bad name = ok_p': exit 3
   PASS  bad config: error names the line
@@ -126,9 +132,12 @@ Generated: 2026-10-22T12:48:16Z
   PASS  --list: exit 0
   PASS  --list: names in config order, settings are not checks
   PASS  --list: only host and checks
+  PASS  --list: plugin name and availability, no arguments
   PASS  spaces around = and no spaces both work: exit 0
   PASS  both checks ran
-  PASS  default plugin_dir is /usr/lib/nagios/plugins
+  PASS  default plugin_dir: both Debian directories, in order, named in the summary
+  PASS  --list names the plugin and the directories searched
+  PASS  default config path is /etc/nagios-checks.conf
 
 ## Argument splitting and no shell
 
@@ -137,6 +146,62 @@ Generated: 2026-10-22T12:48:16Z
   PASS  nothing was executed by a shell
   PASS  unquoted metacharacters are not run either
   PASS  ...they are plain words
+
+## Run budget, default timeout and the warning
+
+  PASS  default timeout 10: six checks add up to 60s, over the default budget of 50s
+  PASS  the warning is also on stderr
+  PASS  with a warning, stdout is still one JSON document
+  PASS  with a warning the checks still ran
+  PASS  five checks (50s) fit the default budget: no warning field
+  PASS  ...and nothing on stderr
+  PASS  budget spent: stdout is one JSON document
+  PASS  effective timeout is capped by the budget left
+  PASS  a check that cannot start is UNKNOWN 'not run' with duration 0
+  PASS  the reply still comes back: three checks, overall UNKNOWN
+  PASS  timeouts (15s) over the budget: warning names both
+  PASS  a fast check within budget is untouched
+  PASS  budget must be a whole number >= 1
+
+## --list availability and plugin_dir with several directories
+
+  PASS  --list with unavailable plugins: exit 3
+  PASS  --list: available and unavailable, plugin name only
+  PASS  --list: reason for a missing plugin
+  PASS  --list: reason for a non-executable plugin
+  PASS  --list: reason for a link that leaves plugin_dir
+  PASS  --list: an available check has no reason and shows no arguments
+  PASS  run: the summary names the plugin
+  PASS  --list when all are available: exit 0
+  PASS  several dirs: the first match wins
+  PASS  several dirs: a plugin only in a later dir is found
+  PASS  containment is checked against the dir the plugin was found in
+  PASS  not found: every dir is named
+  PASS  several dirs: order decides (reversed)
+
+## check_mem
+
+  PASS  check_mem is executable
+  PASS  62% available: exit 0
+  PASS  OK output with sizes
+  PASS  perfdata in MB with warn/crit/min/max
+  PASS  7% available, defaults: WARNING exit 1
+  PASS  WARNING output
+  PASS  2% available, defaults: CRITICAL exit 2
+  PASS  CRITICAL output
+  PASS  20% with -w 25 -c 10: WARNING
+  PASS  10% with -w 25 -c 10: WARNING (CRITICAL is below the limit)
+  PASS  9% with -w 25 -c 10: CRITICAL
+  PASS  bad -w: UNKNOWN exit 3
+  PASS  bad -w: says UNKNOWN
+  PASS  -w below -c: UNKNOWN
+  PASS  unknown option: UNKNOWN
+  PASS  stray argument: UNKNOWN
+  PASS  no MemAvailable: exit 3
+  PASS  no MemAvailable: UNKNOWN names it
+  PASS  no meminfo file: exit 3
+  PASS  real /proc/meminfo: exit 0
+  PASS  through the wrapper: perfdata parsed
 
 ## Real monitoring plugins
 
@@ -172,8 +237,10 @@ Generated: 2026-10-22T12:48:16Z
   PASS  missing job config: logged
   PASS  example config: agent-03 asked for its check
   PASS  example config: agent-01 asked for three checks
+  PASS  example config: one agent, local and network checks in separate calls
+  PASS  example config: ...the second call
   PASS  example config has a schedule
   PASS  nagios-checks.sh is executable
 
-Results: 146 passed, 0 failed, 1 skipped
+Results: 204 passed, 0 failed, 1 skipped
 VERDICT: PASS
