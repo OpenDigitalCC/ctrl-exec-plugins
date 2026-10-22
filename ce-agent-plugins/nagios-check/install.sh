@@ -7,10 +7,13 @@
 # agent script goes (default /opt/ctrl-exec-scripts; cloudient uses
 # /srv/scripts). --dry-run checks everything and changes nothing.
 #
-# Nothing a host already has is moved or overwritten without being asked:
-# an existing /etc/nagios-checks.conf is kept (the shipped one is written
-# beside it as .new) and an existing scripts.conf entry is never changed.
-# Only our own two scripts are replaced when they differ.
+# Nothing a host already has is overwritten without being asked: an existing
+# /etc/nagios-checks/checks.conf is kept (the shipped one is written beside it
+# as .new) and an existing scripts.conf entry is never changed. Only our own
+# two scripts are replaced when they differ. The one thing that is moved is
+# the config of an older install: when only /etc/nagios-checks.conf exists, it
+# is moved to /etc/nagios-checks/checks.conf (the folder is made, root 755, if
+# missing and left as it is if present).
 #
 # Test-only environment (the test suite uses these; leave them unset):
 #   NC_ROOT=DIR         prefix for /etc, /usr and the default script dir
@@ -35,7 +38,9 @@ done
 
 PLUGINS_SYS="$ROOT/usr/lib/nagios/plugins"
 PLUGINS_LOCAL="$ROOT/usr/local/lib/nagios/plugins"
-CONF="$ROOT/etc/nagios-checks.conf"
+CONF_DIR="$ROOT/etc/nagios-checks"
+CONF="$CONF_DIR/checks.conf"
+OLD_CONF="$ROOT/etc/nagios-checks.conf"
 AGENT_DIR="$ROOT/etc/ctrl-exec-agent"
 OWNER=(-o root -g root)
 [ -n "${NC_ALLOW_NONROOT:-}" ] && OWNER=()
@@ -82,12 +87,29 @@ fi
 put "$HERE/nagios-check.pl" "$SCRIPT_DIR/nagios-check.pl"
 put "$HERE/plugins/check_mem" "$PLUGINS_LOCAL/check_mem"
 
-# 5. config: never overwritten
+# 5. config: never overwritten. The folder is made if missing; a config left
+#    at the old path by an earlier install is moved in, unless the new path
+#    already has one.
 EXAMPLE="$HERE/nagios-checks.conf.example"
-if [ ! -e "$CONF" ]; then
+CUR="$CONF"    # where the config is now (the old path in a dry-run that would move it)
+if [ ! -d "$CONF_DIR" ]; then
+    [ "$DRY" = 0 ] && install -d -m 755 "${OWNER[@]}" "$CONF_DIR"
+    changed "created $CONF_DIR"
+elif [ $(( 8#$(mode_of "$CONF_DIR") & 5 )) != 5 ]; then
+    warn "$CONF_DIR is mode $(mode_of "$CONF_DIR"), the script runs unprivileged and must be able to enter it (left as it is)"
+fi
+if [ ! -e "$CONF" ] && [ -f "$OLD_CONF" ]; then
+    [ "$DRY" = 0 ] && mv -- "$OLD_CONF" "$CONF"
+    CUR="$OLD_CONF"
+    [ "$DRY" = 0 ] && CUR="$CONF"
+    changed "moved $OLD_CONF to $CONF (the old path is no longer read)"
+elif [ -e "$CONF" ] && [ -e "$OLD_CONF" ]; then
+    warn "$OLD_CONF still exists but is not read ($CONF is); remove it when nothing else uses it"
+fi
+if [ ! -e "$CUR" ]; then
     [ "$DRY" = 0 ] && install -m 644 "${OWNER[@]}" "$EXAMPLE" "$CONF"
     changed "installed $CONF from the example (adjust the thresholds)"
-elif cmp -s "$EXAMPLE" "$CONF"; then
+elif cmp -s "$EXAMPLE" "$CUR"; then
     ok "$CONF matches the shipped example"
 else
     if [ -f "$CONF.new" ] && cmp -s "$EXAMPLE" "$CONF.new"; then
@@ -98,8 +120,8 @@ else
     fi
     warn "kept your $CONF; the shipped one is in $CONF.new"
 fi
-if [ -e "$CONF" ] && [ $(( 8#$(mode_of "$CONF") & 4 )) = 0 ]; then
-    warn "$CONF is mode $(mode_of "$CONF"), the script runs unprivileged: mode set to 644 (nothing else touched)"
+if [ -e "$CUR" ] && [ $(( 8#$(mode_of "$CUR") & 4 )) = 0 ]; then
+    warn "$CONF is mode $(mode_of "$CUR"), the script runs unprivileged: mode set to 644 (nothing else touched)"
     [ "$DRY" = 0 ] && chmod 644 "$CONF"
 fi
 

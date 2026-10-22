@@ -5,7 +5,7 @@
 # one summary line per run.
 #
 # The job decides WHAT is checked (the names below) and WHEN (schedule=); each
-# agent decides HOW (its own nagios-checks.conf). Only names are sent.
+# agent decides HOW (its own checks.conf). Only names are sent.
 #
 # Config (nagios-checks.conf next to this script), one key per line:
 #   schedule = <cron expression>

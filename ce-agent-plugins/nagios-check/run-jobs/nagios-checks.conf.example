@@ -8,7 +8,7 @@
 #   check    = <agent> <check-name> [<check-name> ...]
 #                                                 the checks to run on that agent
 #
-# Check names are the keys in the agent's nagios-checks.conf; list them, and
+# Check names are the keys in the agent's checks.conf; list them, and
 # see whether each plugin is installed there (available true or false), with
 #   ctrl-exec-cli run <agent> --script nagios-check -- --list
 # Only names go over the wire. Thresholds, plugin and arguments are the

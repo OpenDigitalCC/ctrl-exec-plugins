@@ -1,7 +1,9 @@
 # nagios-checks.conf - a standard set of checks for a Debian host
 #
-# Install as /etc/nagios-checks.conf, owned by root, mode 644 (the script runs
-# as an unprivileged user and must be able to read it). Needs the package
+# Install as /etc/nagios-checks/checks.conf (folder root:root 755), owned by
+# root, mode 644 (the script runs as an unprivileged user and must be able to
+# read it). Older installs used /etc/nagios-checks.conf; the script still reads
+# that when the new path does not exist, and install.sh moves it. Needs the package
 # monitoring-plugins-basic, plus check_mem from this plugin's plugins/ folder
 # installed in /usr/local/lib/nagios/plugins (see README).
 #

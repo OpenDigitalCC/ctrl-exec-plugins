@@ -35,8 +35,8 @@ agent decides **how**.
 | --- | --- | --- |
 | Which checks run | the caller | the names given as arguments on each run |
 | When they run | the caller | its own schedule (a run-jobs job, cron, a person) |
-| Which plugin and arguments a name means | the agent | `nagios-checks.conf` on the agent |
-| Thresholds, paths, plugin directories, timeout, run budget | the agent | `nagios-checks.conf` on the agent |
+| Which plugin and arguments a name means | the agent | `/etc/nagios-checks/checks.conf` on the agent |
+| Thresholds, paths, plugin directories, timeout, run budget | the agent | `/etc/nagios-checks/checks.conf` on the agent |
 
 The script sends nothing to a plugin that the agent's own file did not
 contain. The caller can only choose among the names the agent offers; it
@@ -81,7 +81,7 @@ changes nothing; it runs as any user.
 It installs `nagios-check.pl` into the script directory and `check_mem` into
 `/usr/local/lib/nagios/plugins` (both root:root 755; a different copy of
 either is replaced, they are this plugin's own files), puts
-`nagios-checks.conf.example` at `/etc/nagios-checks.conf` when there is none,
+`nagios-checks.conf.example` at `/etc/nagios-checks/checks.conf` when there is none,
 adds `nagios-check = <script-dir>/nagios-check.pl` to
 `/etc/ctrl-exec-agent/scripts.conf`, reloads the agent when that file changed,
 and finally runs `nagios-check.pl --list` as the user the check runs as to
@@ -89,10 +89,17 @@ show which plugins are available. Each step prints one line: `ok`, `changed`,
 `skip`, `warn` or `FAIL`, then `done: N changed, N warnings`. A second run
 changes nothing.
 
-It never overwrites what the host already has. An existing
-`/etc/nagios-checks.conf` is kept and the shipped one is written beside it as
-`/etc/nagios-checks.conf.new` (only its mode is corrected, to 644, if the
-unprivileged user could not read it). An existing `nagios-check =` line in
+It never overwrites what the host already has. The config lives in the folder
+`/etc/nagios-checks/` (made root:root 755 when missing, left as it is when
+present). An existing `/etc/nagios-checks/checks.conf` is kept and the shipped
+one is written beside it as `/etc/nagios-checks/checks.conf.new` (only its
+mode is corrected, to 644, if the unprivileged user could not read it). A host
+installed earlier has its config at `/etc/nagios-checks.conf`: when the new
+path does not exist, the installer **moves** that file there (reported as
+`changed`), contents and mode kept; when both exist the new one wins and the
+old one is left in place with a warning. The script itself also falls back to
+the old path when the new file does not exist, so a host upgraded without
+running the installer keeps working (one line on stderr says so). An existing `nagios-check =` line in
 `scripts.conf` is left as it is, with a warning when it names another path.
 `agent.conf` is never edited: when the executor is enabled and there is no
 `[profile default]`, the installer prints the snippet to add
@@ -106,7 +113,8 @@ The same by hand:
 
 ```bash
 sudo install -o root -g root -m 755 nagios-check.pl /opt/ctrl-exec-scripts/nagios-check
-sudo install -o root -g root -m 644 nagios-checks.conf /etc/nagios-checks.conf
+sudo install -d -o root -g root -m 755 /etc/nagios-checks
+sudo install -o root -g root -m 644 nagios-checks.conf /etc/nagios-checks/checks.conf
 ```
 
 Keep both owned by root and not writable by others: the configuration
@@ -115,7 +123,7 @@ decides what the script executes. The script normally runs as an unprivileged
 by that user: root-owned, mode 644. It is not under `/etc/ctrl-exec-agent`
 because that directory is mode 750 and the unprivileged user cannot enter it.
 When the file cannot be read, the error names the user that tried
-(`cannot read config /etc/nagios-checks.conf as user nobody: Permission denied`).
+(`cannot read config /etc/nagios-checks/checks.conf as user nobody: Permission denied`).
 
 `nagios-checks.conf.example` is a standard set of checks for a Debian host
 (disk, load, mem, swap, zombies, procs): copy it and adjust the thresholds.
@@ -124,10 +132,14 @@ On the dispatcher, copy `run-jobs/nagios-checks.sh` and a
 `nagios-checks.conf` (from `nagios-checks.conf.example`) into the run-jobs
 scripts folder.
 
-### nagios-checks.conf (agent)
+### checks.conf (agent)
 
-Default path `/etc/nagios-checks.conf`; the environment
-variable `NAGIOS_CHECKS_CONF` overrides it (the tests use this).
+Default path `/etc/nagios-checks/checks.conf`; the environment variable
+`NAGIOS_CHECKS_CONF` overrides it (the tests use this). Up to the previous
+release the path was `/etc/nagios-checks.conf`: when the default does not
+exist and that file does, the script uses it and writes one line to stderr
+(`nagios-checks: using /etc/nagios-checks.conf; move it to ...`); the JSON on
+stdout is the same. `NAGIOS_CHECKS_ROOT` (tests only) prefixes both defaults.
 
 ```ini
 # Settings (all optional)
@@ -271,7 +283,7 @@ arguments for tools that read it.
 
 ## Subcommands
 
-The arguments are check names, or one of two options.
+The arguments are check names, or one of three options.
 
 `nagios-check <name> [<name> ...]`
 : Run the named checks, in the order given (a name repeated runs once).
@@ -295,6 +307,23 @@ The arguments are check names, or one of two options.
 `nagios-check --all`
 : Run every configured check. An explicit request; a run with no arguments is
   an error.
+
+`nagios-check --check-config <file>`
+: Parse `<file>` with the same parser and rules as the real config and run
+  nothing. Prints what `--list` prints, for that file, plus its settings, and
+  exits 0 when it parses; a plugin that is missing shows `available:false`
+  (the file may be for another host or deployed before the plugin is) and
+  does not change the exit code. A file that cannot be read or does not parse
+  exits 3 with an `error` that names the line and does not repeat it:
+
+  ```json
+  {"host":"agent-01","config":"/etc/nagios-checks/.checks.conf.new.123",
+   "settings":{"plugin_dir":"/usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins","timeout":10,"budget":50},
+   "checks":[{"name":"disk","plugin":"check_disk","available":true}]}
+  ```
+
+  This is the validate command for deploying the config with the
+  `config-deploy` plugin: `validate=/opt/ctrl-exec-scripts/nagios-check.pl --check-config {}`.
 
 ### Output
 
@@ -462,5 +491,7 @@ each timeout test waits one or two seconds.
 - The script keeps no history and does no alerting of its own. Trends,
   acknowledgements and notification belong to whatever reads the syslog lines
   or the JSON.
-- Nothing distributes `nagios-checks.conf` to the agents; install it as any
-  other agent configuration.
+- This plugin does not distribute `checks.conf` to the agents. The
+  `config-deploy` plugin can (see its README), with `--check-config` as the
+  check run before the file is installed; otherwise install it as any other
+  agent configuration.

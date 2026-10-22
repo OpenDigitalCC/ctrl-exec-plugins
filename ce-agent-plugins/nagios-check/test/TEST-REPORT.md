@@ -1,5 +1,5 @@
 # Test report: nagios-check (ce-agent-plugins)
-Generated: 2026-10-22T15:03:46Z
+Generated: 2026-10-22T17:53:35Z
 
 ## Contract: no arguments and the sidecar
 
@@ -11,7 +11,7 @@ Generated: 2026-10-22T15:03:46Z
   PASS  nagios-check.pl has a perl shebang
   PASS  schema sidecar is valid JSON with arguments, argv and read_only
   PASS  perl -c passes
-  PASS  wrapper stays small (265 lines)
+  PASS  wrapper stays small (296 lines)
 
 ## State mapping and the overall state
 
@@ -137,7 +137,77 @@ Generated: 2026-10-22T15:03:46Z
   PASS  both checks ran
   PASS  default plugin_dir: both Debian directories, in order, named in the summary
   PASS  --list names the plugin and the directories searched
-  PASS  default config path is /etc/nagios-checks.conf
+  PASS  default config path is /etc/nagios-checks/checks.conf
+
+## Config folder: default path, fallback to the old path
+
+  PASS  new path exists: it is used
+  PASS  new path exists: nothing on stderr
+  PASS  only the old path exists: exit 0
+  PASS  only the old path exists: it is used
+  PASS  only the old path exists: stdout is one JSON document
+  PASS  only the old path exists: one stderr line says so
+  PASS  only the old path exists: exactly one line
+  PASS  only the old path exists: a run works
+  PASS  only the old path exists: a run's state
+  PASS  neither exists: exit 3
+  PASS  neither exists: the error names the new path
+  PASS  neither exists: no fallback line
+  PASS  NAGIOS_CHECKS_CONF set: no fallback to the old path
+  PASS  NAGIOS_CHECKS_CONF set: no fallback line
+
+## --check-config
+
+  PASS  --check-config: exit 0 although a plugin is missing
+  PASS  --check-config: stdout is one JSON document
+  PASS  --check-config: the file's checks, one available, one not
+  PASS  --check-config: the missing plugin has a reason
+  PASS  --check-config: settings
+  PASS  --check-config: names the file and the host
+  PASS  --check-config: the configured config is not needed (absent.conf)
+  PASS  --check-config: reads the file given, not the configured one
+  PASS  --check-config: default settings when the file has none
+  PASS  --check-config: a config with no checks parses (exit 0)
+  PASS  --check-config: ...with an empty list
+  PASS  --check-config: no plugin is run
+  PASS  --check-config bad 'garbage topsecretword': exit 3
+  PASS  --check-config bad: error names the file and a line
+  PASS  --check-config bad: the line is not echoed
+  PASS  --check-config bad: state and no checks
+  PASS  --check-config bad 'ok = ': exit 3
+  PASS  --check-config bad: error names the file and a line
+  PASS  --check-config bad: the line is not echoed
+  PASS  --check-config bad: state and no checks
+  PASS  --check-config bad 'timeout = abc': exit 3
+  PASS  --check-config bad: error names the file and a line
+  PASS  --check-config bad: the line is not echoed
+  PASS  --check-config bad: state and no checks
+  PASS  --check-config bad 'budget = 0': exit 3
+  PASS  --check-config bad: error names the file and a line
+  PASS  --check-config bad: the line is not echoed
+  PASS  --check-config bad: state and no checks
+  PASS  --check-config bad 'bad name = ok_p': exit 3
+  PASS  --check-config bad: error names the file and a line
+  PASS  --check-config bad: the line is not echoed
+  PASS  --check-config bad: state and no checks
+  PASS  --check-config bad 'dup = ok_p / dup = ok_p': exit 3
+  PASS  --check-config bad: error names the file and a line
+  PASS  --check-config bad: the line is not echoed
+  PASS  --check-config bad: state and no checks
+  PASS  --check-config bad 'q = ok_p 'unterminated topsecretword': exit 3
+  PASS  --check-config bad: error names the file and a line
+  PASS  --check-config bad: the line is not echoed
+  PASS  --check-config bad: state and no checks
+  PASS  --check-config bad 'x = ok_p / y topsecretword': exit 3
+  PASS  --check-config bad: error names the file and a line
+  PASS  --check-config bad: the line is not echoed
+  PASS  --check-config bad: state and no checks
+  PASS  --check-config: missing file exit 3
+  PASS  --check-config: missing file named
+  PASS  --check-config without a file: exit 3
+  PASS  --check-config with two files: exit 3
+  PASS  --check-config with a check name too: exit 3
+  PASS  sidecar describes --check-config
 
 ## Argument splitting and no shell
 
@@ -245,11 +315,14 @@ Generated: 2026-10-22T15:03:46Z
 ## install.sh (temp root, fake systemctl and runuser, no root needed)
 
   PASS  fresh install: exit 0
-  PASS  fresh install: reports 4 changes
+  PASS  fresh install: reports 5 changes (script, check_mem, folder, config, scripts.conf)
   PASS  fresh install: script installed 755
   PASS  fresh install: script is a copy of ours
   PASS  fresh install: check_mem installed
   PASS  fresh install: config is 644
+  PASS  fresh install: config folder is 755
+  PASS  fresh install: the folder is reported
+  PASS  fresh install: nothing at the old path
   PASS  fresh install: scripts.conf entry added
   PASS  fresh install: agent reloaded
   PASS  fresh install: verify line printed
@@ -263,6 +336,27 @@ Generated: 2026-10-22T15:03:46Z
   PASS  existing config: mode fixed and said so
   PASS  existing config: mode is 644
   PASS  different script replaced
+  PASS  old path only: exit 0
+  PASS  old path only: reported as changed
+  PASS  old path only: the old file is gone
+  PASS  old path only: contents kept
+  PASS  old path only: the unprivileged user can read it (mode fixed)
+  PASS  old path only: the shipped config is offered as .new
+  PASS  old path only: not replaced by the example
+  PASS  old path only, second run: nothing more to move
+  PASS  old path only, second run: no move
+  PASS  old path equals the example: moved
+  PASS  old path equals the example: then matches it
+  PASS  old path equals the example: no .new
+  PASS  both exist: the new one is not overwritten
+  PASS  both exist: the old one is left
+  PASS  both exist: warned that the old one is not read
+  PASS  both exist: nothing is moved
+  PASS  existing folder: mode left alone
+  PASS  existing folder: not created again
+  PASS  existing folder that others cannot enter: warned
+  PASS  dry-run, old path only: says it would move
+  PASS  dry-run, old path only: nothing moved or made
   PASS  scripts.conf other path: warned with the path
   PASS  scripts.conf other path: left alone
   PASS  scripts.conf other path: no reload
@@ -284,5 +378,5 @@ Generated: 2026-10-22T15:03:46Z
   PASS  non-root without --dry-run: FAIL
   PASS  install.sh is shellcheck clean
 
-Results: 243 passed, 0 failed, 1 skipped
+Results: 331 passed, 0 failed, 1 skipped
 VERDICT: PASS

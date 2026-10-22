@@ -5,10 +5,15 @@
 #   nagios-check --all                   run every configured check
 #   nagios-check --list                  list the checks and whether each plugin
 #                                        is available (exit 3 if any is not)
+#   nagios-check --check-config FILE     parse FILE like the config, run nothing:
+#                                        list its checks and settings (exit 0 if
+#                                        it parses, 3 with an error if not)
 #
 # The caller names the checks; this host's config says how to run each one
-# (/etc/nagios-checks.conf, or $NAGIOS_CHECKS_CONF; it must be readable by
-# the user the script runs as):
+# (/etc/nagios-checks/checks.conf, or $NAGIOS_CHECKS_CONF; it must be readable
+# by the user the script runs as). A host that still has the old
+# /etc/nagios-checks.conf and no new file keeps working: that file is used,
+# with one line on stderr.
 #
 #   plugin_dir = /usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins   # default
 #   timeout    = 10                          # seconds per check, default 10
@@ -40,7 +45,10 @@ use POSIX ();
 use Sys::Hostname qw(hostname);
 use Time::HiRes qw(time);
 
-my $CONF = $ENV{NAGIOS_CHECKS_CONF} // '/etc/nagios-checks.conf';
+# NAGIOS_CHECKS_ROOT (tests only) is a prefix for the two default paths.
+my $ROOT     = $ENV{NAGIOS_CHECKS_ROOT} // '';
+my $CONF     = $ENV{NAGIOS_CHECKS_CONF} // "$ROOT/etc/nagios-checks/checks.conf";
+my $OLD_CONF = "$ROOT/etc/nagios-checks.conf";
 my @STATE = qw(OK WARNING CRITICAL UNKNOWN);
 my %CODE  = map { $STATE[$_] => $_ } 0 .. 3;
 my %RANK  = (CRITICAL => 3, WARNING => 2, UNKNOWN => 1, OK => 0);
@@ -66,6 +74,7 @@ sub split_args {
 }
 
 sub load_conf {
+    my $CONF = shift;
     open my $fh, '<', $CONF or fail("cannot read config $CONF as user " . (getpwuid($>) // $>) . ": $!");
     my %cfg = (plugin_dir => '/usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins',
                timeout => 10, budget => 50, check => {}, order => []);
@@ -79,7 +88,7 @@ sub load_conf {
             $cfg{$k} = $v;
         }
         else {
-            $k =~ /^[A-Za-z0-9_-]+$/ or fail("$CONF line $.: bad check name '$k'");
+            $k =~ /^[A-Za-z0-9_-]+$/ or fail("$CONF line $.: bad check name '" . substr($k, 0, 40) . "'");
             exists $cfg{check}{$k} and fail("$CONF line $.: check '$k' defined twice");
             my $w = split_args($v) or fail("$CONF line $.: unterminated quote");
             @$w or fail("$CONF line $.: check '$k' names no plugin");
@@ -222,23 +231,45 @@ sub run_check {
              duration_ms => int((time - $t0) * 1000) };
 }
 
+# The checks of a loaded config with the plugin of each and whether it can run.
+sub check_rows {
+    my $cfg = shift;
+    return [ map {
+        my $plugin = $cfg->{check}{$_}[0];
+        my ($real, $why) = locate($cfg, $plugin);
+        +{ name => $_, plugin => $plugin, available => $real ? JSON::PP::true : JSON::PP::false,
+          $real ? () : (reason => $why) }
+    } @{ $cfg->{order} } ];
+}
+
+# The config to use: $NAGIOS_CHECKS_CONF, else the new default, else (only when
+# the new one is absent) the old path, which says so once on stderr.
+sub conf_path {
+    return $CONF if $ENV{NAGIOS_CHECKS_CONF} || -e $CONF || !-e $OLD_CONF;
+    print STDERR "nagios-check: using $OLD_CONF; move it to $CONF\n";
+    return $OLD_CONF;
+}
+
 sub main {
     @ARGV or do {
-        print STDERR "usage: nagios-check --list | --all | <check> [<check> ...]\n";
+        print STDERR "usage: nagios-check --list | --all | --check-config FILE | <check> [<check> ...]\n";
         fail('no arguments: name the checks to run, or --list');
     };
-    my $cfg = load_conf();
     my $host = hostname();
+    if ($ARGV[0] eq '--check-config') {
+        @ARGV == 2 or fail('--check-config takes one file');
+        my $cfg = load_conf($ARGV[1]);
+        print $json->encode({ host => $host, config => $ARGV[1], checks => check_rows($cfg),
+                              settings => { plugin_dir => $cfg->{plugin_dir}, timeout => $cfg->{timeout} + 0,
+                                            budget => $cfg->{budget} + 0 } }), "\n";
+        exit 0;
+    }
+    my $cfg = load_conf(conf_path());
     if ($ARGV[0] eq '--list') {
         @ARGV == 1 or fail('--list takes no other arguments');
-        my @list = map {
-            my $plugin = $cfg->{check}{$_}[0];
-            my ($real, $why) = locate($cfg, $plugin);
-            +{ name => $_, plugin => $plugin, available => $real ? JSON::PP::true : JSON::PP::false,
-              $real ? () : (reason => $why) }
-        } @{ $cfg->{order} };
-        print $json->encode({ host => $host, checks => \@list }), "\n";
-        exit((grep { !$_->{available} } @list) ? 3 : 0);
+        my $list = check_rows($cfg);
+        print $json->encode({ host => $host, checks => $list }), "\n";
+        exit((grep { !$_->{available} } @$list) ? 3 : 0);
     }
     my @names = @ARGV == 1 && $ARGV[0] eq '--all' ? @{ $cfg->{order} } : @ARGV;
     @names or fail('no checks are configured');

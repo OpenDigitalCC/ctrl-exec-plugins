@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "description": "Run named Nagios plugins on this host and return one JSON document: per check the state, summary, parsed performance data and long output, and the worst state overall. The caller names the checks; this host's nagios-checks.conf says which plugin and arguments each name runs, so no plugin arguments are accepted. Checks run one after another within a run budget (default 50 s), each check capped at its timeout (default 10 s); a check the budget cannot cover is UNKNOWN \"not run\", and a \"warning\" field appears when the timeouts add up to more than the budget. Exit code is the overall state: 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN (also any wrapper error). Makes no changes of its own.",
+  "description": "Run named Nagios plugins on this host and return one JSON document: per check the state, summary, parsed performance data and long output, and the worst state overall. The caller names the checks; this host's checks.conf (/etc/nagios-checks/checks.conf) says which plugin and arguments each name runs, so no plugin arguments are accepted. Checks run one after another within a run budget (default 50 s), each check capped at its timeout (default 10 s); a check the budget cannot cover is UNKNOWN \"not run\", and a \"warning\" field appears when the timeouts add up to more than the budget. Exit code is the overall state: 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN (also any wrapper error). Makes no changes of its own. check_config parses a given config file and runs nothing.",
   "read_only": true,
   "idempotent": true,
   "arguments": {
@@ -16,6 +16,10 @@
         "type": "boolean",
         "description": "List the checks this host offers, each with the plugin name and whether that plugin is available (available, and a reason when not), instead of running any. Exits 3 when any plugin is not available."
       },
+      "check_config": {
+        "type": "string",
+        "description": "Path of a config file to parse with the same rules as the real one, running nothing: returns its checks (name, plugin, available) and settings; exit 0 if it parses (a missing plugin shows available false), 3 with an error naming the line if it does not. Used as the validate command when the config is deployed."
+      },
       "all": {
         "type": "boolean",
         "description": "Run every check configured on this host."
@@ -24,6 +28,7 @@
   },
   "argv": [
     { "arg": "list", "flag": "--list" },
+    { "arg": "check_config", "flag": "--check-config" },
     { "arg": "all", "flag": "--all" },
     { "arg": "checks", "repeat": true }
   ]

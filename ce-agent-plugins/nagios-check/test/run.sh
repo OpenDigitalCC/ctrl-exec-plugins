@@ -109,7 +109,7 @@ perl -MJSON::PP -e 'open my $f, "<", $ARGV[0] or exit 1; local $/; my $d = decod
     || fail "schema sidecar is valid JSON with arguments, argv and read_only"
 perl -c "$NC" > /dev/null 2>&1 && pass "perl -c passes" || fail "perl -c passes"
 n="$(wc -l < "$NC")"
-[ "$n" -le 280 ] && pass "wrapper stays small ($n lines)" || fail "wrapper stays small" "$n lines"
+[ "$n" -le 320 ] && pass "wrapper stays small ($n lines)" || fail "wrapper stays small" "$n lines"
 
 # ---------------------------------------------------------------------------
 heading "State mapping and the overall state"
@@ -281,7 +281,95 @@ NAGIOS_CHECKS_CONF="$T/defaults.conf" nc ok
 expect_has "default plugin_dir: both Debian directories, in order, named in the summary" "$OUT" "ok_p: plugin not found in /usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins"
 NAGIOS_CHECKS_CONF="$T/defaults.conf" nc --list
 jis "--list names the plugin and the directories searched" '$d->{checks}[0]{reason}' '"plugin not found in /usr/lib/nagios/plugins:/usr/local/lib/nagios/plugins"'
-expect_eq "default config path is /etc/nagios-checks.conf" "1" "$(grep -c "'/etc/nagios-checks.conf'" "$NC")"
+expect_eq "default config path is /etc/nagios-checks/checks.conf" "1" "$(grep -c '/etc/nagios-checks/checks.conf"' "$NC")"
+
+# ---------------------------------------------------------------------------
+heading "Config folder: default path, fallback to the old path"
+
+# NAGIOS_CHECKS_ROOT prefixes the default paths (tests only); no NAGIOS_CHECKS_CONF
+FR="$T/froot"
+mkdir -p "$FR/etc/nagios-checks"
+nr() {
+    OUT="$(env -u NAGIOS_CHECKS_CONF NAGIOS_CHECKS_ROOT="$FR" perl "$NC" "$@" 2> "$T/err" < /dev/null)"
+    RC=$?
+    ERR="$(cat "$T/err")"
+}
+printf '%s\n' "plugin_dir = $P" "timeout = 1" "newone = ok_p" > "$FR/etc/nagios-checks/checks.conf"
+printf '%s\n' "plugin_dir = $P" "timeout = 1" "oldone = ok_p" > "$FR/etc/nagios-checks.conf"
+nr --list
+jis "new path exists: it is used" '[map { $_->{name} } @{$d->{checks}}]' '["newone"]'
+expect_eq "new path exists: nothing on stderr" "" "$ERR"
+rm "$FR/etc/nagios-checks/checks.conf"
+nr --list
+expect_eq "only the old path exists: exit 0" 0 "$RC"
+jis "only the old path exists: it is used" '[map { $_->{name} } @{$d->{checks}}]' '["oldone"]'
+is_json && pass "only the old path exists: stdout is one JSON document" || fail "only the old path exists: stdout is one JSON document"
+expect_has "only the old path exists: one stderr line says so" "$ERR" "nagios-check: using $FR/etc/nagios-checks.conf; move it to $FR/etc/nagios-checks/checks.conf"
+expect_eq "only the old path exists: exactly one line" 1 "$(wc -l <<< "$ERR")"
+nr oldone
+expect_eq "only the old path exists: a run works" 0 "$RC"
+jis "only the old path exists: a run's state" '$d->{state}' '"OK"'
+rm "$FR/etc/nagios-checks.conf"
+nr --list
+expect_eq "neither exists: exit 3" 3 "$RC"
+expect_has "neither exists: the error names the new path" "$OUT" "$FR/etc/nagios-checks/checks.conf"
+expect_eq "neither exists: no fallback line" "" "$ERR"
+printf '%s\n' "plugin_dir = $P" "oldone = ok_p" > "$FR/etc/nagios-checks.conf"
+OUT="$(NAGIOS_CHECKS_ROOT="$FR" NAGIOS_CHECKS_CONF="$T/absent.conf" perl "$NC" --list 2> "$T/err" < /dev/null)"; RC=$?
+expect_eq "NAGIOS_CHECKS_CONF set: no fallback to the old path" 3 "$RC"
+expect_eq "NAGIOS_CHECKS_CONF set: no fallback line" "" "$(cat "$T/err")"
+
+# ---------------------------------------------------------------------------
+heading "--check-config"
+
+conf "ok = ok_p" "gone = no_such_plugin -w 1" "timeout = 7" "budget = 40"
+cp "$CONF" "$T/candidate.conf"
+printf '%s\n' "plugin_dir = $P" "other = ok_p -x" "timeout = 3" > "$T/other.conf"
+NAGIOS_CHECKS_CONF="$T/absent.conf" nc --check-config "$T/candidate.conf"
+expect_eq "--check-config: exit 0 although a plugin is missing" 0 "$RC"
+is_json && pass "--check-config: stdout is one JSON document" || fail "--check-config: stdout is one JSON document" "$OUT"
+jis "--check-config: the file's checks, one available, one not" '[map { [$_->{name}, $_->{available}] } @{$d->{checks}}]' '[["ok",true],["gone",false]]'
+expect_has "--check-config: the missing plugin has a reason" "$(jv '$d->{checks}[1]{reason}')" "plugin not found"
+jis "--check-config: settings" '$d->{settings}' "{\"budget\":40,\"plugin_dir\":\"$P\",\"timeout\":7}"
+jis "--check-config: names the file and the host" '[$d->{config}, length($d->{host}) > 0 ? 1 : 0]' "[\"$T/candidate.conf\",1]"
+expect_eq "--check-config: the configured config is not needed (absent.conf)" "" "$ERR"
+nc --check-config "$T/other.conf"
+jis "--check-config: reads the file given, not the configured one" '[map { $_->{name} } @{$d->{checks}}]' '["other"]'
+jis "--check-config: default settings when the file has none" '$d->{settings}{budget}' 50
+echo "# nothing" > "$T/empty.conf"
+nc --check-config "$T/empty.conf"
+expect_eq "--check-config: a config with no checks parses (exit 0)" 0 "$RC"
+jis "--check-config: ...with an empty list" '$d->{checks}' '[]'
+# nothing is run
+rm -f "$T/ran"
+plugin ran_p 'touch "'"$T"'/ran"; echo OK; exit 0'
+printf '%s\n' "plugin_dir = $P" "r = ran_p" > "$T/ran.conf"
+nc --check-config "$T/ran.conf"
+[ ! -e "$T/ran" ] && pass "--check-config: no plugin is run" || fail "--check-config: no plugin is run"
+
+SECRET="topsecretword"
+for body in "garbage $SECRET" "ok = " "timeout = abc" "budget = 0" "bad name = ok_p" "dup = ok_p
+dup = ok_p" "q = ok_p 'unterminated $SECRET" "x = ok_p
+y $SECRET"; do
+    printf '%s\n' "$body" > "$T/bad.conf"
+    nc --check-config "$T/bad.conf"
+    expect_eq "--check-config bad '${body//$'\n'/ / }': exit 3" 3 "$RC"
+    is_json && jis "--check-config bad: error names the file and a line" '$d->{error} =~ /bad\.conf line \d/ ? 1 : 0' 1 || fail "--check-config bad: JSON"
+    expect_lacks "--check-config bad: the line is not echoed" "$OUT" "$SECRET"
+    jis "--check-config bad: state and no checks" '[$d->{state}, exists $d->{checks} ? 1 : 0]' '["UNKNOWN",0]'
+done
+nc --check-config "$T/nonexistent.conf"
+expect_eq "--check-config: missing file exit 3" 3 "$RC"
+expect_has "--check-config: missing file named" "$OUT" "nonexistent.conf"
+nc --check-config
+expect_eq "--check-config without a file: exit 3" 3 "$RC"
+nc --check-config "$T/ok.conf" extra
+expect_eq "--check-config with two files: exit 3" 3 "$RC"
+nc --check-config "$T/empty.conf" ok
+expect_eq "--check-config with a check name too: exit 3" 3 "$RC"
+perl -MJSON::PP -e 'open my $f, "<", $ARGV[0] or exit 1; local $/; my $d = decode_json(<$f>);
+    exit(exists $d->{arguments}{properties}{check_config} && grep { ($_->{flag} // "") eq "--check-config" } @{$d->{argv}} ? 0 : 1)' "$SCHEMA" \
+    && pass "sidecar describes --check-config" || fail "sidecar describes --check-config"
 
 # ---------------------------------------------------------------------------
 heading "Argument splitting and no shell"
@@ -559,7 +647,7 @@ IB="$T/ibin"
 R="$T/iroot"
 mkdir -p "$IB"
 printf '#!/bin/bash\necho "$*" >> "$STUB_SYSTEMCTL_LOG"\nexit 0\n' > "$IB/systemctl"
-printf '#!/bin/bash\nshift 3\nNAGIOS_CHECKS_CONF="$NC_ROOT/etc/nagios-checks.conf" exec "$@"\n' > "$IB/runuser"
+printf '#!/bin/bash\nshift 3\nNAGIOS_CHECKS_CONF="$NC_ROOT/etc/nagios-checks/checks.conf" exec "$@"\n' > "$IB/runuser"
 chmod 755 "$IB/systemctl" "$IB/runuser"
 export STUB_SYSTEMCTL_LOG="$T/systemctl.log"
 
@@ -588,11 +676,14 @@ inst() {
 newroot
 inst
 expect_eq "fresh install: exit 0" 0 "$RC"
-expect_has "fresh install: reports 4 changes" "$OUT" "done: 4 changed"
+expect_has "fresh install: reports 5 changes (script, check_mem, folder, config, scripts.conf)" "$OUT" "done: 5 changed"
 [ -x "$R/opt/ctrl-exec-scripts/nagios-check.pl" ] && pass "fresh install: script installed 755" || fail "fresh install: script installed 755"
 cmp -s "$NC" "$R/opt/ctrl-exec-scripts/nagios-check.pl" && pass "fresh install: script is a copy of ours" || fail "fresh install: script is a copy of ours"
 [ -x "$R/usr/local/lib/nagios/plugins/check_mem" ] && pass "fresh install: check_mem installed" || fail "fresh install: check_mem installed"
-expect_eq "fresh install: config is 644" 644 "$(stat -c %a "$R/etc/nagios-checks.conf")"
+expect_eq "fresh install: config is 644" 644 "$(stat -c %a "$R/etc/nagios-checks/checks.conf")"
+expect_eq "fresh install: config folder is 755" 755 "$(stat -c %a "$R/etc/nagios-checks")"
+expect_has "fresh install: the folder is reported" "$OUT" "changed created $R/etc/nagios-checks"
+[ ! -e "$R/etc/nagios-checks.conf" ] && pass "fresh install: nothing at the old path" || fail "fresh install: nothing at the old path"
 expect_has "fresh install: scripts.conf entry added" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")" "nagios-check = $R/opt/ctrl-exec-scripts/nagios-check.pl"
 expect_has "fresh install: agent reloaded" "$(cat "$STUB_SYSTEMCTL_LOG")" "reload ctrl-exec-agent"
 expect_has "fresh install: verify line printed" "$OUT" "verify as"
@@ -604,16 +695,65 @@ expect_lacks "second run: no changed line" "$OUT" "changed /"
 expect_eq "second run: no reload" "" "$(cat "$STUB_SYSTEMCTL_LOG")"
 expect_eq "second run: scripts.conf has one entry" 1 "$(grep -c '^nagios-check' "$R/etc/ctrl-exec-agent/scripts.conf")"
 
-echo "# my own checks" > "$R/etc/nagios-checks.conf"
-chmod 600 "$R/etc/nagios-checks.conf"
+echo "# my own checks" > "$R/etc/nagios-checks/checks.conf"
+chmod 600 "$R/etc/nagios-checks/checks.conf"
 echo "tampered" >> "$R/opt/ctrl-exec-scripts/nagios-check.pl"
 inst
-expect_eq "existing config: kept" "# my own checks" "$(cat "$R/etc/nagios-checks.conf")"
-cmp -s "$DIR/nagios-checks.conf.example" "$R/etc/nagios-checks.conf.new" && pass "existing config: shipped one in .new" || fail "existing config: shipped one in .new"
+expect_eq "existing config: kept" "# my own checks" "$(cat "$R/etc/nagios-checks/checks.conf")"
+cmp -s "$DIR/nagios-checks.conf.example" "$R/etc/nagios-checks/checks.conf.new" && pass "existing config: shipped one in .new" || fail "existing config: shipped one in .new"
 expect_has "existing config: warned" "$OUT" "kept your"
 expect_has "existing config: mode fixed and said so" "$OUT" "mode set to 644"
-expect_eq "existing config: mode is 644" 644 "$(stat -c %a "$R/etc/nagios-checks.conf")"
+expect_eq "existing config: mode is 644" 644 "$(stat -c %a "$R/etc/nagios-checks/checks.conf")"
 cmp -s "$NC" "$R/opt/ctrl-exec-scripts/nagios-check.pl" && pass "different script replaced" || fail "different script replaced"
+
+# the config of an earlier install, at the old path, is moved
+newroot
+printf '%s\n' "# my old checks" "disk = check_disk" > "$R/etc/nagios-checks.conf"
+chmod 640 "$R/etc/nagios-checks.conf"
+inst
+expect_eq "old path only: exit 0" 0 "$RC"
+expect_has "old path only: reported as changed" "$OUT" "changed moved $R/etc/nagios-checks.conf to $R/etc/nagios-checks/checks.conf"
+[ ! -e "$R/etc/nagios-checks.conf" ] && pass "old path only: the old file is gone" || fail "old path only: the old file is gone"
+expect_eq "old path only: contents kept" $'# my old checks\ndisk = check_disk' "$(cat "$R/etc/nagios-checks/checks.conf")"
+expect_eq "old path only: the unprivileged user can read it (mode fixed)" 644 "$(stat -c %a "$R/etc/nagios-checks/checks.conf")"
+expect_has "old path only: the shipped config is offered as .new" "$OUT" "kept your $R/etc/nagios-checks/checks.conf"
+expect_lacks "old path only: not replaced by the example" "$(cat "$R/etc/nagios-checks/checks.conf")" "monitoring-plugins"
+inst
+expect_has "old path only, second run: nothing more to move" "$OUT" "done: 0 changed"
+expect_lacks "old path only, second run: no move" "$OUT" "changed moved"
+
+newroot
+cp "$DIR/nagios-checks.conf.example" "$R/etc/nagios-checks.conf"
+inst
+expect_has "old path equals the example: moved" "$OUT" "moved $R/etc/nagios-checks.conf"
+expect_has "old path equals the example: then matches it" "$OUT" "checks.conf matches the shipped example"
+expect_eq "old path equals the example: no .new" "" "$(compgen -G "$R/etc/nagios-checks/*.new")"
+
+newroot
+echo "# old" > "$R/etc/nagios-checks.conf"
+mkdir -p "$R/etc/nagios-checks"
+echo "# new one" > "$R/etc/nagios-checks/checks.conf"
+chmod 644 "$R/etc/nagios-checks/checks.conf"
+inst
+expect_eq "both exist: the new one is not overwritten" "# new one" "$(cat "$R/etc/nagios-checks/checks.conf")"
+expect_eq "both exist: the old one is left" "# old" "$(cat "$R/etc/nagios-checks.conf")"
+expect_has "both exist: warned that the old one is not read" "$OUT" "is not read"
+expect_lacks "both exist: nothing is moved" "$OUT" "changed moved"
+
+newroot
+mkdir -p "$R/etc/nagios-checks"
+chmod 750 "$R/etc/nagios-checks"
+inst
+expect_eq "existing folder: mode left alone" 750 "$(stat -c %a "$R/etc/nagios-checks")"
+expect_has "existing folder: not created again" "$OUT" "done: 4 changed"
+expect_has "existing folder that others cannot enter: warned" "$OUT" "must be able to enter it"
+chmod 755 "$R/etc/nagios-checks"
+
+newroot
+echo "# old" > "$R/etc/nagios-checks.conf"
+inst --dry-run
+expect_has "dry-run, old path only: says it would move" "$OUT" "changed moved $R/etc/nagios-checks.conf to $R/etc/nagios-checks/checks.conf (the old path is no longer read) (dry-run"
+[ -f "$R/etc/nagios-checks.conf" ] && [ ! -e "$R/etc/nagios-checks" ] && pass "dry-run, old path only: nothing moved or made" || fail "dry-run, old path only: nothing moved or made"
 
 newroot
 echo "nagios-check = /srv/elsewhere/nagios-check" >> "$R/etc/ctrl-exec-agent/scripts.conf"
@@ -643,7 +783,7 @@ newroot
 inst --dry-run
 expect_eq "dry-run: exit 0" 0 "$RC"
 expect_has "dry-run: says what would change" "$OUT" "changed installed $R/opt/ctrl-exec-scripts/nagios-check.pl (dry-run"
-expect_eq "dry-run: nothing written" "" "$(find "$R/opt" "$R/usr/local" "$R/etc/nagios-checks.conf" 2> /dev/null)"
+expect_eq "dry-run: nothing written" "" "$(find "$R/opt" "$R/usr/local" "$R/etc/nagios-checks" "$R/etc/nagios-checks.conf" 2> /dev/null)"
 expect_eq "dry-run: scripts.conf untouched" "# agent scripts" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")"
 expect_eq "dry-run: no reload" "" "$(cat "$STUB_SYSTEMCTL_LOG")"
 
