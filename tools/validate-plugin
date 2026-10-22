@@ -182,6 +182,8 @@ validate_agent_script() {
     local script_files=()
     if [[ -f "$plugin_path/${plugin_name}.sh" ]]; then
         script_files=("$plugin_path/${plugin_name}.sh")
+    elif [[ -f "$plugin_path/${plugin_name}.pl" ]]; then
+        script_files=("$plugin_path/${plugin_name}.pl")
     else
         mapfile -t script_files < <(find "$plugin_path" -maxdepth 1 -name "*.sh" 2>/dev/null | sort)
     fi
@@ -197,7 +199,7 @@ validate_agent_script() {
     fi
 
     if [[ ${#script_files[@]} -eq 0 ]]; then
-        fail "No script file found (expected ${plugin_name}.sh or .sh files at the plugin root)"
+        fail "No script file found (expected ${plugin_name}.sh, ${plugin_name}.pl or .sh files at the plugin root)"
         echo ""
         return
     fi
@@ -240,7 +242,7 @@ validate_one_agent_script() {
     fi
 
     # Script name matches allowlist pattern
-    local script_name="${script_basename%.sh}"
+    local script_name="${script_basename%.*}"
     if [[ "$script_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         pass "Script name '$script_name' matches allowlist pattern [\\w-]+"
     else
