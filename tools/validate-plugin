@@ -185,7 +185,9 @@ validate_agent_script() {
     elif [[ -f "$plugin_path/${plugin_name}.pl" ]]; then
         script_files=("$plugin_path/${plugin_name}.pl")
     else
-        mapfile -t script_files < <(find "$plugin_path" -maxdepth 1 -name "*.sh" 2>/dev/null | sort)
+        # install.sh is the plugin's installer, not an agent script; Perl agent
+        # scripts are agent-*.pl.
+        mapfile -t script_files < <(find "$plugin_path" -maxdepth 1 \( \( -name "*.sh" ! -name install.sh \) -o -name "agent-*.pl" \) 2>/dev/null | sort)
     fi
 
     echo "[ Agent script ]"
