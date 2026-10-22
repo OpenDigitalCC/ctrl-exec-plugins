@@ -24,7 +24,7 @@ SCHEMA="$DIR/agent-config-deploy.pl.schema.json"
 JOB="$DIR/run-jobs/config-push.sh"
 JOBCONF_EXAMPLE="$DIR/run-jobs/config-push.conf.example"
 MAPEX="$DIR/config-deploy.conf.example"
-NAGIOS="$DIR/../nagios-check/nagios-check.pl"
+NAGIOS="$(cd "$DIR/../nagios-check" 2> /dev/null && pwd)/nagios-check.pl"
 
 PASS=0 FAIL=0 SKIP=0
 T="$(mktemp -d "${TMPDIR:-/tmp}/config-deploy-test.XXXXXX")" || exit 2

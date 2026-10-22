@@ -1,5 +1,5 @@
 # Test report: config-deploy (ce-agent-plugins)
-Generated: 2026-10-22T17:48:22Z
+Generated: 2026-10-22T17:53:20Z
 
 ## Contract: usage, the script and the sidecar
 
@@ -389,7 +389,11 @@ Generated: 2026-10-22T17:48:22Z
 
 ## nagios-check --check-config as the validate command
 
-  SKIP  nagios-check --check-config not available
+  PASS  good nagios config: deployed
+  PASS  good nagios config: validate exit 0
+  PASS  bad nagios config: refused
+  PASS  bad nagios config: the parser's line number
+  PASS  bad nagios config: old file kept
 
 ## install.sh (temp root, fake systemctl, no root needed)
 
@@ -436,5 +440,5 @@ Generated: 2026-10-22T17:48:22Z
   PASS  install.sh: unknown option exits 2
   PASS  install.sh is shellcheck clean
 
-Results: 398 passed, 0 failed, 1 skipped
+Results: 403 passed, 0 failed, 0 skipped
 VERDICT: PASS
