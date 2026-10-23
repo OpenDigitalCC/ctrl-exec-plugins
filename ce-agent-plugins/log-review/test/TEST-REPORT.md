@@ -1,5 +1,5 @@
 # Test report: log-review (ce-agent-plugins)
-Generated: 2026-10-23T08:31:42Z
+Generated: 2026-10-23T08:33:23Z
 
 ## Contract: usage, the script and the sidecar
 
@@ -261,12 +261,12 @@ Generated: 2026-10-23T08:31:42Z
   PASS  usage: '--check-config' exits 2
   PASS  usage: '--check-config' prints usage on stderr
   PASS  usage: '--check-config' prints nothing on stdout
-  PASS  usage: '--check-config /tmp/log-review-test.4UOt0H/etc/sources.conf f' exits 2
-  PASS  usage: '--check-config /tmp/log-review-test.4UOt0H/etc/sources.conf f' prints usage on stderr
-  PASS  usage: '--check-config /tmp/log-review-test.4UOt0H/etc/sources.conf f' prints nothing on stdout
-  PASS  usage: '--check-config /tmp/log-review-test.4UOt0H/etc/sources.conf --text' exits 2
-  PASS  usage: '--check-config /tmp/log-review-test.4UOt0H/etc/sources.conf --text' prints usage on stderr
-  PASS  usage: '--check-config /tmp/log-review-test.4UOt0H/etc/sources.conf --text' prints nothing on stdout
+  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf f' exits 2
+  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf f' prints usage on stderr
+  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf f' prints nothing on stdout
+  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --text' exits 2
+  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --text' prints usage on stderr
+  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --text' prints nothing on stdout
   PASS  usage: '--text' exits 2
   PASS  usage: '--text' prints usage on stderr
   PASS  usage: '--text' prints nothing on stdout
@@ -282,12 +282,12 @@ Generated: 2026-10-23T08:31:42Z
   PASS  usage: 'f --text --text' exits 2
   PASS  usage: 'f --text --text' prints usage on stderr
   PASS  usage: 'f --text --text' prints nothing on stdout
-  PASS  usage: '--check-config /tmp/log-review-test.4UOt0H/etc/sources.conf --list' exits 2
-  PASS  usage: '--check-config /tmp/log-review-test.4UOt0H/etc/sources.conf --list' prints usage on stderr
-  PASS  usage: '--check-config /tmp/log-review-test.4UOt0H/etc/sources.conf --list' prints nothing on stdout
-  PASS  usage: 'f --check-config /tmp/log-review-test.4UOt0H/etc/sources.conf' exits 2
-  PASS  usage: 'f --check-config /tmp/log-review-test.4UOt0H/etc/sources.conf' prints usage on stderr
-  PASS  usage: 'f --check-config /tmp/log-review-test.4UOt0H/etc/sources.conf' prints nothing on stdout
+  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --list' exits 2
+  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --list' prints usage on stderr
+  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --list' prints nothing on stdout
+  PASS  usage: 'f --check-config /tmp/log-review-test.8fa62d/etc/sources.conf' exits 2
+  PASS  usage: 'f --check-config /tmp/log-review-test.8fa62d/etc/sources.conf' prints usage on stderr
+  PASS  usage: 'f --check-config /tmp/log-review-test.8fa62d/etc/sources.conf' prints nothing on stdout
   PASS  usage: 'f --all' exits 2
   PASS  usage: 'f --all' prints usage on stderr
   PASS  usage: 'f --all' prints nothing on stdout
@@ -493,5 +493,75 @@ Wide character in print at -e line 4, <STDIN> line 1.
   PASS  nothing on stderr for a normal run
   PASS  nothing on stderr for --list
 
-Results: 455 passed, 0 failed, 0 skipped
+## install.sh (temp root, fake systemctl and runuser, no root needed)
+
+  PASS  script_dirs excludes the dir: exit 1
+  PASS  script_dirs excludes the dir: FAIL names the allowed folders
+  PASS  script_dirs excludes the dir: nothing installed
+  PASS  script_dirs excludes the dir: scripts.conf untouched
+  PASS  script_dirs excludes the dir: dry-run fails too
+  PASS  script_dirs includes the dir: exit 0
+  PASS  script_dirs includes the dir: ok line
+  PASS  script_dirs: a subfolder of an allowed dir is accepted
+  PASS  script_dirs: a name prefix is not a folder prefix
+  PASS  no script_dirs: no script_dirs line
+  PASS  fresh install: exit 0
+  PASS  fresh install: reports 4 changes (script, folder, config, scripts.conf)
+  PASS  fresh install: script installed 755
+  PASS  fresh install: script mode
+  PASS  fresh install: script is a copy of ours
+  PASS  fresh install: config is 644
+  PASS  fresh install: config folder is 755
+  PASS  fresh install: config is the example
+  PASS  fresh install: the folder is reported
+  PASS  fresh install: scripts.conf entry added with the profile
+  PASS  fresh install: agent reloaded
+  PASS  fresh install: profile found
+  PASS  fresh install: verify line printed
+  PASS  fresh install: verify lists the sources
+  PASS  fresh install: agent.conf untouched
+  PASS  second run: nothing changed
+  PASS  second run: no changed line
+  PASS  second run: no reload
+  PASS  second run: scripts.conf has one entry
+  PASS  second run: scripts.conf entry recognised
+  PASS  second run: no .new
+  PASS  existing config: kept
+  PASS  existing config: shipped one in .new
+  PASS  existing config: warned
+  PASS  existing config: mode fixed and said so
+  PASS  existing config: mode is 644
+  PASS  different script replaced
+  PASS  existing config, second run: .new not rewritten
+  PASS  existing folder: mode left alone
+  PASS  existing folder: not created again
+  PASS  existing folder that others cannot enter: warned
+  PASS  scripts.conf other path: warned with the path
+  PASS  scripts.conf other path: left alone
+  PASS  scripts.conf other path: no reload
+  PASS  scripts.conf entry without the profile: warned
+  PASS  scripts.conf entry without the profile: left alone
+  PASS  no scripts.conf: exit 1
+  PASS  no scripts.conf: FAIL line
+  PASS  no scripts.conf: says why
+  PASS  no log-review profile: still exit 0
+  PASS  no log-review profile: warns
+  PASS  no log-review profile: gives the snippet
+  PASS  no log-review profile: names the groups
+  PASS  no log-review profile: agent.conf untouched
+  PASS  dry-run: exit 0
+  PASS  dry-run: says what would change
+  PASS  dry-run: nothing written
+  PASS  dry-run: scripts.conf untouched
+  PASS  dry-run: no reload
+  PASS  --script-dir: used
+  PASS  unreadable source: installer still exit 0
+  PASS  unreadable source: verify warns with the reason
+  PASS  unreadable source: names it
+  PASS  install.sh: unknown option exits 2
+  PASS  non-root without --dry-run: exit 1
+  PASS  non-root without --dry-run: FAIL
+  PASS  install.sh is shellcheck clean
+
+Results: 522 passed, 0 failed, 0 skipped
 VERDICT: PASS

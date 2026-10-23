@@ -620,7 +620,7 @@ jis "folder file: sources with filter flags, no readable probe" '[map { [$_->{na
 jis "folder file: config and settings" '[$d->{config}, $d->{settings}{max_lines}]' "[\"$ETC/sources.conf.new\",200]"
 expect_lacks "folder file: the regex is not echoed" "$OUT" "SECRETVAL"
 expect_eq "check-config runs nothing (no journalctl)" 0 "$(calls)"
-(cd "$ETC" && OUT="$(perl "$LR" --check-config sources.conf.new 2>&1)"; echo "$OUT" | grep -q '"sources"') && pass "folder file, relative from inside the folder: accepted" || fail "folder file, relative from inside the folder: accepted"
+(cd "$ETC" && rel="$(perl "$LR" --check-config sources.conf.new 2>&1)"; echo "$rel" | grep -q '"sources"') && pass "folder file, relative from inside the folder: accepted" || fail "folder file, relative from inside the folder: accepted"
 (cd "$ETC" && rel="$(perl "$LR" --check-config ./sources.conf.new 2>&1)"; echo "$rel" | grep -q '"sources"') && pass "folder file, ./ relative: accepted" || fail "folder file, ./ relative: accepted"
 printf 'good = file /var/log/x\nSECRETVAL no equals\n' > "$ETC/.sources.conf.new.123"
 lr --check-config "$ETC/.sources.conf.new.123"
@@ -674,7 +674,170 @@ expect_eq "nothing on stderr for a normal run" "" "$ERR"
 lr --list
 expect_eq "nothing on stderr for --list" "" "$ERR"
 
-# INSTALL-TESTS-HERE
+# ---------------------------------------------------------------------------
+heading "install.sh (temp root, fake systemctl and runuser, no root needed)"
+
+INST="$DIR/install.sh"
+IB="$T/ibin"
+R="$T/iroot"
+mkdir -p "$IB"
+printf '#!/bin/bash\necho "$*" >> "$STUB_SYSTEMCTL_LOG"\nexit 0\n' > "$IB/systemctl"
+printf '#!/bin/bash\nshift 3\nLOG_REVIEW_CONF="$LR_ROOT/etc/log-review/sources.conf" exec "$@"\n' > "$IB/runuser"
+chmod 755 "$IB/systemctl" "$IB/runuser"
+export STUB_SYSTEMCTL_LOG="$T/systemctl.log"
+
+# newroot [noscripts] [noprofile]: a fresh agent host under $R
+newroot() {
+    rm -rf "$R"
+    mkdir -p "$R/etc/ctrl-exec-agent"
+    : > "$STUB_SYSTEMCTL_LOG"
+    printf '# agent scripts\n' > "$R/etc/ctrl-exec-agent/scripts.conf"
+    printf 'executor_socket = /run/x.sock\n\n[profile default]\nrun_as = nobody\n\n[profile log-review]\nrun_as = ce-logs\nno_new_privileges = yes\n' > "$R/etc/ctrl-exec-agent/agent.conf"
+    for o in "$@"; do
+        case "$o" in
+            noscripts) rm -f "$R/etc/ctrl-exec-agent/scripts.conf" ;;
+            noprofile) printf 'executor_socket = /run/x.sock\n\n[profile default]\nrun_as = nobody\n' > "$R/etc/ctrl-exec-agent/agent.conf" ;;
+        esac
+    done
+}
+# inst ARGS...: runs the installer against $R; OUT holds its output, RC its exit
+inst() {
+    OUT="$(LR_ROOT="$R" LR_ALLOW_NONROOT=1 PATH="$IB:$PATH" bash "$INST" "$@" 2>&1 < /dev/null)"
+    RC=$?
+}
+
+# script_dirs in agent.conf
+newroot
+sed -i '1i script_dirs = /usr/local/lib/ctrl-exec-scripts:/srv/scripts/other' "$R/etc/ctrl-exec-agent/agent.conf"
+inst --script-dir /srv/scripts
+expect_eq "script_dirs excludes the dir: exit 1" 1 "$RC"
+expect_has "script_dirs excludes the dir: FAIL names the allowed folders" "$OUT" "FAIL /srv/scripts is not under agent.conf script_dirs (/usr/local/lib/ctrl-exec-scripts:/srv/scripts/other)"
+[ ! -e "$R/srv/scripts" ] && [ ! -e "$R/etc/log-review" ] && pass "script_dirs excludes the dir: nothing installed" || fail "script_dirs excludes the dir: nothing installed"
+expect_lacks "script_dirs excludes the dir: scripts.conf untouched" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")" "log-review"
+inst --script-dir /srv/scripts --dry-run
+expect_eq "script_dirs excludes the dir: dry-run fails too" 1 "$RC"
+inst --script-dir /usr/local/lib/ctrl-exec-scripts
+expect_eq "script_dirs includes the dir: exit 0" 0 "$RC"
+expect_has "script_dirs includes the dir: ok line" "$OUT" "ok /usr/local/lib/ctrl-exec-scripts is under script_dirs"
+newroot
+sed -i '1i script_dirs = /srv/scripts/other' "$R/etc/ctrl-exec-agent/agent.conf"
+inst --script-dir /srv/scripts/other/sub
+expect_eq "script_dirs: a subfolder of an allowed dir is accepted" 0 "$RC"
+newroot
+sed -i '1i script_dirs = /srv/scripts/other' "$R/etc/ctrl-exec-agent/agent.conf"
+inst --script-dir /srv/scripts/oth
+expect_eq "script_dirs: a name prefix is not a folder prefix" 1 "$RC"
+newroot
+inst --script-dir /srv/scripts
+expect_lacks "no script_dirs: no script_dirs line" "$OUT" "script_dirs"
+
+newroot
+cp "$R/etc/ctrl-exec-agent/agent.conf" "$T/agent.conf.before"
+inst
+expect_eq "fresh install: exit 0" 0 "$RC"
+expect_has "fresh install: reports 4 changes (script, folder, config, scripts.conf)" "$OUT" "done: 4 changed"
+[ -x "$R/opt/ctrl-exec-scripts/log-review.pl" ] && pass "fresh install: script installed 755" || fail "fresh install: script installed 755"
+expect_eq "fresh install: script mode" 755 "$(stat -c %a "$R/opt/ctrl-exec-scripts/log-review.pl")"
+cmp -s "$LR" "$R/opt/ctrl-exec-scripts/log-review.pl" && pass "fresh install: script is a copy of ours" || fail "fresh install: script is a copy of ours"
+expect_eq "fresh install: config is 644" 644 "$(stat -c %a "$R/etc/log-review/sources.conf")"
+expect_eq "fresh install: config folder is 755" 755 "$(stat -c %a "$R/etc/log-review")"
+cmp -s "$DIR/sources.conf.example" "$R/etc/log-review/sources.conf" && pass "fresh install: config is the example" || fail "fresh install: config is the example"
+expect_has "fresh install: the folder is reported" "$OUT" "changed created $R/etc/log-review"
+expect_has "fresh install: scripts.conf entry added with the profile" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")" "log-review = $R/opt/ctrl-exec-scripts/log-review.pl profile=log-review"
+expect_has "fresh install: agent reloaded" "$(cat "$STUB_SYSTEMCTL_LOG")" "reload ctrl-exec-agent"
+expect_has "fresh install: profile found" "$OUT" "[profile log-review] defined"
+expect_has "fresh install: verify line printed" "$OUT" "verify as"
+expect_has "fresh install: verify lists the sources" "$OUT" "auth"
+cmp -s "$T/agent.conf.before" "$R/etc/ctrl-exec-agent/agent.conf" && pass "fresh install: agent.conf untouched" || fail "fresh install: agent.conf untouched"
+
+: > "$STUB_SYSTEMCTL_LOG"
+inst
+expect_has "second run: nothing changed" "$OUT" "done: 0 changed"
+expect_lacks "second run: no changed line" "$OUT" "changed /"
+expect_eq "second run: no reload" "" "$(cat "$STUB_SYSTEMCTL_LOG")"
+expect_eq "second run: scripts.conf has one entry" 1 "$(grep -c '^log-review' "$R/etc/ctrl-exec-agent/scripts.conf")"
+expect_has "second run: scripts.conf entry recognised" "$OUT" "scripts.conf already has log-review"
+[ ! -e "$R/etc/log-review/sources.conf.new" ] && pass "second run: no .new" || fail "second run: no .new"
+
+echo "# my own sources" > "$R/etc/log-review/sources.conf"
+chmod 600 "$R/etc/log-review/sources.conf"
+echo "tampered" >> "$R/opt/ctrl-exec-scripts/log-review.pl"
+inst
+expect_eq "existing config: kept" "# my own sources" "$(cat "$R/etc/log-review/sources.conf")"
+cmp -s "$DIR/sources.conf.example" "$R/etc/log-review/sources.conf.new" && pass "existing config: shipped one in .new" || fail "existing config: shipped one in .new"
+expect_has "existing config: warned" "$OUT" "kept your"
+expect_has "existing config: mode fixed and said so" "$OUT" "mode set to 644"
+expect_eq "existing config: mode is 644" 644 "$(stat -c %a "$R/etc/log-review/sources.conf")"
+cmp -s "$LR" "$R/opt/ctrl-exec-scripts/log-review.pl" && pass "different script replaced" || fail "different script replaced"
+inst
+expect_has "existing config, second run: .new not rewritten" "$OUT" "done: 0 changed"
+
+newroot
+mkdir -p "$R/etc/log-review"
+chmod 750 "$R/etc/log-review"
+inst
+expect_eq "existing folder: mode left alone" 750 "$(stat -c %a "$R/etc/log-review")"
+expect_has "existing folder: not created again" "$OUT" "done: 3 changed"
+expect_has "existing folder that others cannot enter: warned" "$OUT" "must be able to enter it"
+chmod 755 "$R/etc/log-review"
+
+newroot
+echo "log-review = /srv/elsewhere/log-review.pl profile=log-review" >> "$R/etc/ctrl-exec-agent/scripts.conf"
+inst
+expect_has "scripts.conf other path: warned with the path" "$OUT" "log-review = /srv/elsewhere/log-review.pl"
+expect_eq "scripts.conf other path: left alone" 2 "$(wc -l < "$R/etc/ctrl-exec-agent/scripts.conf")"
+expect_eq "scripts.conf other path: no reload" "" "$(cat "$STUB_SYSTEMCTL_LOG")"
+
+newroot
+echo "log-review = $R/opt/ctrl-exec-scripts/log-review.pl" >> "$R/etc/ctrl-exec-agent/scripts.conf"
+inst
+expect_has "scripts.conf entry without the profile: warned" "$OUT" "has no profile=log-review"
+expect_eq "scripts.conf entry without the profile: left alone" "log-review = $R/opt/ctrl-exec-scripts/log-review.pl" "$(tail -n 1 "$R/etc/ctrl-exec-agent/scripts.conf")"
+
+newroot noscripts
+inst
+expect_eq "no scripts.conf: exit 1" 1 "$RC"
+expect_has "no scripts.conf: FAIL line" "$OUT" "FAIL"
+expect_has "no scripts.conf: says why" "$OUT" "ctrl-exec agent not installed?"
+
+newroot noprofile
+cp "$R/etc/ctrl-exec-agent/agent.conf" "$T/agent.conf.before"
+inst
+expect_eq "no log-review profile: still exit 0" 0 "$RC"
+expect_has "no log-review profile: warns" "$OUT" "has no [profile log-review]"
+expect_has "no log-review profile: gives the snippet" "$OUT" "no_new_privileges = yes"
+expect_has "no log-review profile: names the groups" "$OUT" "adm and systemd-journal"
+cmp -s "$T/agent.conf.before" "$R/etc/ctrl-exec-agent/agent.conf" && pass "no log-review profile: agent.conf untouched" || fail "no log-review profile: agent.conf untouched"
+
+newroot
+inst --dry-run
+expect_eq "dry-run: exit 0" 0 "$RC"
+expect_has "dry-run: says what would change" "$OUT" "changed installed $R/opt/ctrl-exec-scripts/log-review.pl (dry-run"
+expect_eq "dry-run: nothing written" "" "$(find "$R/opt" "$R/etc/log-review" 2> /dev/null)"
+expect_eq "dry-run: scripts.conf untouched" "# agent scripts" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")"
+expect_eq "dry-run: no reload" "" "$(cat "$STUB_SYSTEMCTL_LOG")"
+
+newroot
+inst --script-dir /srv/scripts
+expect_has "--script-dir: used" "$(cat "$R/etc/ctrl-exec-agent/scripts.conf")" "log-review = $R/srv/scripts/log-review.pl profile=log-review"
+
+# an unreadable source is a warning from the verify step, not a failure
+newroot
+inst
+printf 'gone = file /nonexistent/definitely.log\n' > "$R/etc/log-review/sources.conf"
+inst
+expect_eq "unreadable source: installer still exit 0" 0 "$RC"
+expect_has "unreadable source: verify warns with the reason" "$OUT" "warn verify as"
+expect_has "unreadable source: names it" "$OUT" "gone NOT READABLE (file not found)"
+
+inst --bogus
+expect_eq "install.sh: unknown option exits 2" 2 "$RC"
+OUT="$(bash "$INST" 2>&1 < /dev/null)"; RC=$?
+if [ "$(id -u)" != 0 ]; then
+    expect_eq "non-root without --dry-run: exit 1" 1 "$RC"
+    expect_has "non-root without --dry-run: FAIL" "$OUT" "FAIL must run as root"
+fi
+shellcheck -x "$INST" > /dev/null 2>&1 && pass "install.sh is shellcheck clean" || { command -v shellcheck > /dev/null && fail "install.sh is shellcheck clean" || skip "shellcheck not installed"; }
 
 # ---------------------------------------------------------------------------
 echo
