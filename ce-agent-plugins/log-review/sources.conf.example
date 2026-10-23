@@ -1,0 +1,33 @@
+# sources.conf - the logs log-review may return on this host
+#
+# Install as /etc/log-review/sources.conf (folder root:root 755), owned by
+# root, mode 644 (the script runs as an unprivileged user and must be able to
+# read it). config-deploy can push it, with
+#   validate=/opt/ctrl-exec-scripts/log-review.pl --check-config {}
+#
+# The caller of log-review names one of the sources below and a window (a
+# number of lines, a time span). It never sends a path, unit or search string:
+# what each name reads is fixed here.
+#
+#   <name> = journal unit=<name.service> | id=<syslog identifier> [priority=<0-7 or name>] [match=<regex>]
+#   <name> = file <absolute path> [match=<regex>]
+#
+#   unit= / id=  exactly one of them (journalctl -u / -t)
+#   priority=    journalctl -p: 0-7 or emerg alert crit err warning notice info debug
+#   match=       a Perl regex, LAST on the line (the rest of the line is the
+#                regex); only lines it matches are returned
+#   file path    absolute, no . .. // or trailing /, a regular file, not a symlink
+#
+# Settings (all optional):
+#   max_lines     = 1000   # most lines a caller may ask for; may be lowered, never above 1000
+#   default_lines = 100    # lines when the caller gives none
+#   max_span      = 7d     # longest --since: s m h d; never above 7d
+#   timeout       = 15     # seconds for journalctl, default 15
+#
+# Comments go on their own line only. The user the script runs as must be able
+# to read each source (groups adm and systemd-journal, see the README).
+
+auth          = journal id=sshd
+syslog        = file /var/log/syslog
+nginx-errors  = file /var/log/nginx/error.log
+kernel        = journal id=kernel priority=warning

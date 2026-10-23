@@ -1,0 +1,47 @@
+{
+  "version": "1",
+  "description": "Return a bounded slice of a named log source on this host: the last N lines, or the lines of the last time span (at most N), as one JSON document {host, name, kind, target, lines, count, truncated, since, duration_ms}, or as plain lines with text. The caller names a configured source and the window only; which journal unit or file a name reads, and any filter, is fixed in this host's /etc/log-review/sources.conf, so no path, unit or search string is accepted. At most 1000 lines (100 when not given) and 7 days (the agent may lower both). Exit 0 ok, 1 the source cannot be read, 2 caller error, 3 config error. Makes no changes. list shows the configured sources and whether each can be read; check_config parses a config file and runs nothing.",
+  "read_only": true,
+  "idempotent": true,
+  "arguments": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Name of the source, as configured on the agent (see list).",
+        "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]*$"
+      },
+      "lines": {
+        "type": "integer",
+        "description": "How many lines: the last N, or with since the newest N of the window. Default 100 unless the agent sets another.",
+        "minimum": 1,
+        "maximum": 1000
+      },
+      "since": {
+        "type": "string",
+        "description": "Only lines of the last span: a whole number and one of s, m, h, d, such as 90m or 2d. At most 7d (the agent may lower it).",
+        "pattern": "^[1-9][0-9]{0,8}[smhd]$"
+      },
+      "text": {
+        "type": "boolean",
+        "description": "Plain lines instead of JSON (with name only)."
+      },
+      "list": {
+        "type": "boolean",
+        "description": "List the sources this host offers: name, kind (journal or file), target, whether it can be read (and why not), whether a filter applies."
+      },
+      "check_config": {
+        "type": "string",
+        "description": "Path of a config file, in the config's own folder, to parse with the same rules as the real one, running nothing: returns its sources and settings; exit 0 if it parses, 3 with an error naming the line if not. Used as the validate command when the config is deployed."
+      }
+    }
+  },
+  "argv": [
+    { "arg": "list", "flag": "--list" },
+    { "arg": "check_config", "flag": "--check-config" },
+    { "arg": "text", "flag": "--text" },
+    { "arg": "lines", "flag": "--lines" },
+    { "arg": "since", "flag": "--since" },
+    { "arg": "name" }
+  ]
+}

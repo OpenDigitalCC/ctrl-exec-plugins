@@ -1,0 +1,48 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "log-review",
+      "version": "0.1.0",
+      "description": "Return a bounded slice of a named log source (journal or file) on a ctrl-exec agent as JSON or plain text"
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "log-review",
+      "version": "0.1.0",
+      "description": "Agent script (Perl): reads the journal or a file's tail as its sources.conf maps the caller's source name; caller sends only a name and a window"
+    },
+    {
+      "type": "application",
+      "name": "install.sh",
+      "version": "0.1.0",
+      "description": "Installer (bash): puts the script, the example config and the scripts.conf entry in place without overwriting host config; --dry-run reports only"
+    },
+    {
+      "type": "library",
+      "name": "perl-base",
+      "version": "5.36",
+      "description": "Core modules only: JSON::PP, POSIX, Time::HiRes, Time::Local, Cwd, Encode, Fcntl, Sys::Hostname",
+      "purl": "pkg:deb/debian/perl-base"
+    },
+    {
+      "type": "library",
+      "name": "systemd",
+      "version": "252",
+      "description": "Provides journalctl(1), run by argv for journal sources",
+      "purl": "pkg:deb/debian/systemd"
+    },
+    {
+      "type": "library",
+      "name": "bash",
+      "version": "5.2",
+      "description": "GNU Bourne Again shell, for install.sh and test/run.sh",
+      "purl": "pkg:deb/debian/bash"
+    }
+  ]
+}
