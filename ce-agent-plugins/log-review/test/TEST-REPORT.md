@@ -1,5 +1,5 @@
 # Test report: log-review (ce-agent-plugins)
-Generated: 2026-10-23T08:33:23Z
+Generated: 2026-10-23T08:34:40Z
 
 ## Contract: usage, the script and the sidecar
 
@@ -261,12 +261,12 @@ Generated: 2026-10-23T08:33:23Z
   PASS  usage: '--check-config' exits 2
   PASS  usage: '--check-config' prints usage on stderr
   PASS  usage: '--check-config' prints nothing on stdout
-  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf f' exits 2
-  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf f' prints usage on stderr
-  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf f' prints nothing on stdout
-  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --text' exits 2
-  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --text' prints usage on stderr
-  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --text' prints nothing on stdout
+  PASS  usage: '--check-config /tmp/log-review-test.m8iFiN/etc/sources.conf f' exits 2
+  PASS  usage: '--check-config /tmp/log-review-test.m8iFiN/etc/sources.conf f' prints usage on stderr
+  PASS  usage: '--check-config /tmp/log-review-test.m8iFiN/etc/sources.conf f' prints nothing on stdout
+  PASS  usage: '--check-config /tmp/log-review-test.m8iFiN/etc/sources.conf --text' exits 2
+  PASS  usage: '--check-config /tmp/log-review-test.m8iFiN/etc/sources.conf --text' prints usage on stderr
+  PASS  usage: '--check-config /tmp/log-review-test.m8iFiN/etc/sources.conf --text' prints nothing on stdout
   PASS  usage: '--text' exits 2
   PASS  usage: '--text' prints usage on stderr
   PASS  usage: '--text' prints nothing on stdout
@@ -282,12 +282,12 @@ Generated: 2026-10-23T08:33:23Z
   PASS  usage: 'f --text --text' exits 2
   PASS  usage: 'f --text --text' prints usage on stderr
   PASS  usage: 'f --text --text' prints nothing on stdout
-  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --list' exits 2
-  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --list' prints usage on stderr
-  PASS  usage: '--check-config /tmp/log-review-test.8fa62d/etc/sources.conf --list' prints nothing on stdout
-  PASS  usage: 'f --check-config /tmp/log-review-test.8fa62d/etc/sources.conf' exits 2
-  PASS  usage: 'f --check-config /tmp/log-review-test.8fa62d/etc/sources.conf' prints usage on stderr
-  PASS  usage: 'f --check-config /tmp/log-review-test.8fa62d/etc/sources.conf' prints nothing on stdout
+  PASS  usage: '--check-config /tmp/log-review-test.m8iFiN/etc/sources.conf --list' exits 2
+  PASS  usage: '--check-config /tmp/log-review-test.m8iFiN/etc/sources.conf --list' prints usage on stderr
+  PASS  usage: '--check-config /tmp/log-review-test.m8iFiN/etc/sources.conf --list' prints nothing on stdout
+  PASS  usage: 'f --check-config /tmp/log-review-test.m8iFiN/etc/sources.conf' exits 2
+  PASS  usage: 'f --check-config /tmp/log-review-test.m8iFiN/etc/sources.conf' prints usage on stderr
+  PASS  usage: 'f --check-config /tmp/log-review-test.m8iFiN/etc/sources.conf' prints nothing on stdout
   PASS  usage: 'f --all' exits 2
   PASS  usage: 'f --all' prints usage on stderr
   PASS  usage: 'f --all' prints nothing on stdout
