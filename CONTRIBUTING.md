@@ -300,3 +300,14 @@ Atomicity
 British English
 : All written content - README, comments, output strings - uses British
   English spelling throughout.
+
+
+## Release test
+
+`tools/test-release.sh` builds the `ce-api-plugins` bundle into a scratch
+directory, unpacks the `.deb` with `dpkg-deb -x` (no root) and checks that the
+shipped `ctrl-exec-cli` reports the `VERSION` file's release, answers `--help`
+with `--socket`, and matches the tree's script. Run it before cutting a
+release. `make-release.sh` stamps the package version into the `our $VERSION`
+line of `ctrl-exec-cli` and `ctrl-exec-mcp` (the tree keeps a `0.0.0-dev`
+placeholder); the build dies if that line is missing.

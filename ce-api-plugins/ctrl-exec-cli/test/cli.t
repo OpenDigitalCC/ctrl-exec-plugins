@@ -131,4 +131,8 @@ sub run_status {
     like($err, qr/error: nonzero/,  "sync routes the error to STDERR");
 }
 
+# --- version: a placeholder in the tree, stamped by make-release.sh ----------
+# The release test (tools/test-release.sh) checks the shipped value.
+like(`$^X $script --version`, qr/\Actrl-exec-cli \S+\n\z/, "--version prints name and version");
+
 done_testing();

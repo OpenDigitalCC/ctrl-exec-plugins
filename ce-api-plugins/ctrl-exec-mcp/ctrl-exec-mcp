@@ -14,7 +14,7 @@ use CtrlExecMCP::Catalog;
 use CtrlExecMCP::Api;
 use CtrlExecMCP::Runner;
 
-our $VERSION = '0.1.0';
+our $VERSION = '0.0.0-dev';  # stamped with the package version by make-release.sh
 
 # ctrl-exec-mcp - a Model Context Protocol server that bridges an MCP client
 # (e.g. an LLM agent) to the ctrl-exec HTTP API: the protocol core, the stdio

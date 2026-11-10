@@ -30,6 +30,15 @@
 #                    Single-category builds do not bump version or touch git
 #   --no-deb         Skip Debian package builds (tarballs only)
 #
+# Environment:
+#   DIST_DIR         Output directory (default: <repo>/dist). The release test
+#                    (tools/test-release.sh) points it at a scratch directory.
+#
+# Version stamping: the scripts listed in STAMPED carry a placeholder
+# "our $VERSION" in the tree. Every tarball and package is built from a copy
+# in which that line is set to the VERSION file, so the shipped ctrl-exec-cli
+# reports the package version. The build dies if a listed script has no such line.
+#
 # Reads version from VERSION file in the repo root.
 # Run from the repo root.
 
@@ -181,7 +190,14 @@ if [[ $BUILD_DEB -eq 1 && $DRY_RUN -eq 0 ]]; then
         || die "dpkg-deb not found (install dpkg-dev). Use --no-deb to skip Debian packages."
 fi
 
-DIST_DIR="$REPO_ROOT/dist"
+DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
+
+# Scripts whose "our $VERSION = '...';" line is stamped with the package
+# version at build time (paths relative to the repo root).
+STAMPED=(
+    ce-api-plugins/ctrl-exec-cli/ctrl-exec-cli
+    ce-api-plugins/ctrl-exec-mcp/ctrl-exec-mcp
+)
 
 # ---------------------------------------------------------------------------
 # Packaging
@@ -215,7 +231,7 @@ stage_plugin_tree() {
         --exclude='.DS_Store' \
         --exclude='*/test' \
         --exclude='*/t' \
-        -C "$REPO_ROOT" "${CATEGORY_DIR[$category]}" \
+        -C "$SRC_ROOT" "${CATEGORY_DIR[$category]}" \
         | tar -xf - -C "$destparent"
 }
 
@@ -359,6 +375,22 @@ if [[ $DRY_RUN -eq 0 ]]; then
     done
 fi
 
+# Build every artefact from a stamped copy of the tree (see STAMPED above), so
+# the working tree is never modified.
+SRC_ROOT="$BUILD_TMP/src"
+if [[ $DRY_RUN -eq 0 ]]; then
+    mkdir -p "$SRC_ROOT"
+    for category in "${CATEGORIES[@]}"; do
+        cp -a "$REPO_ROOT/${CATEGORY_DIR[$category]}" "$SRC_ROOT/"
+    done
+    for rel in "${STAMPED[@]}"; do
+        [[ -f "$SRC_ROOT/$rel" ]] || continue   # category not being built
+        grep -q "^our \$VERSION = '[^']*';" "$SRC_ROOT/$rel" \
+            || die "$rel has no \"our \$VERSION = '...';\" line to stamp."
+        sed -i "s/^our \$VERSION = '[^']*';/our \$VERSION = '$VERSION';/" "$SRC_ROOT/$rel"
+    done
+fi
+
 BUILT=()
 BUILT_PKGS=()
 
@@ -382,7 +414,7 @@ for category in "${CATEGORIES[@]}"; do
         --exclude='*.bak' \
         --exclude='.git' \
         --exclude='.DS_Store' \
-        -C "$REPO_ROOT" \
+        -C "$SRC_ROOT" \
         "$src_dir"
 
     sha256sum "$dest" | awk '{print $1"  '"$tarball"'"}' \

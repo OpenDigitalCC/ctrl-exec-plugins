@@ -9,7 +9,7 @@ use Encode       ();
 use B            ();
 use Sys::Syslog  ();
 
-our $VERSION = '0.1.0';
+our $VERSION = '0.0.0-dev';  # stamped with the package version by make-release.sh
 
 # ---------------------------------------------------------------------------
 # Defaults
