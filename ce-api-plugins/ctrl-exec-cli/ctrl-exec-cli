@@ -52,7 +52,23 @@ sub main {
         exit 0;
     }
 
+    # --timeout is global, but `wait` has its own --timeout (its deadline), so
+    # it is not in the whole-argv parse above. It is taken before the command
+    # word (always global) and after it for every command except `wait`.
+    while (@ARGV && $ARGV[0] =~ /\A--timeout(?:=(.*))?\z/s) {
+        shift @ARGV;
+        $global{timeout} = defined $1 ? $1 : shift @ARGV;
+        unless (defined $global{timeout}) {
+            print STDERR "Error: --timeout requires a value (seconds)\n";
+            exit 2;
+        }
+    }
+
     my $cmd = shift @ARGV // '';
+
+    if ($cmd ne 'wait') {
+        GetOptionsFromArray(\@ARGV, 'timeout=s' => \$global{timeout});
+    }
 
     if ($global{help} && !$cmd) {
         print usage_main();
@@ -647,7 +663,7 @@ sub cmd_discovery {
 sub api_get {
     my ($ctx, $path) = @_;
     my %req = (headers => { 'Accept' => 'application/json' });
-    return _handle_response(_unix_request($ctx->{socket}, 'GET', $path, \%req))
+    return _handle_response(_unix_request($ctx->{socket}, 'GET', $path, \%req, $ctx->{timeout}))
         if $ctx->{socket};
     my $res = _make_ua($ctx)->get($ctx->{url} . $path, \%req);
     return _handle_response($res);
@@ -662,7 +678,7 @@ sub api_post {
         },
         content => encode_json($body),
     );
-    return _handle_response(_unix_request($ctx->{socket}, 'POST', $path, \%req))
+    return _handle_response(_unix_request($ctx->{socket}, 'POST', $path, \%req, $ctx->{timeout}))
         if $ctx->{socket};
     my $res = _make_ua($ctx)->post($ctx->{url} . $path, \%req);
     return _handle_response($res);
@@ -679,7 +695,7 @@ sub _make_ua {
     }
     return HTTP::Tiny->new(
         agent   => "ctrl-exec-cli/$VERSION",
-        timeout => 120,
+        timeout => $ctx->{timeout} // 120,
         %tls,
     );
 }
@@ -688,7 +704,8 @@ sub _make_ua {
 # speaks only TCP, so this is a minimal HTTP/1.0 exchange; the API answers one
 # request per connection and closes it. Returns HTTP::Tiny's response shape.
 sub _unix_request {
-    my ($path_sock, $method, $path, $req) = @_;
+    my ($path_sock, $method, $path, $req, $timeout) = @_;
+    $timeout //= 120;
     require IO::Socket::UNIX;
     my $s = IO::Socket::UNIX->new(Peer => $path_sock, Type => IO::Socket::UNIX::SOCK_STREAM())
         or return { status => 599, content => "cannot connect to socket $path_sock: $!" };
@@ -702,14 +719,14 @@ sub _unix_request {
     local $SIG{PIPE} = 'IGNORE';
     print {$s} $head, $content
         or return { status => 599, content => "write to socket $path_sock failed: $!" };
-    # Same rule as HTTP::Tiny's timeout above: give up after 120 s with
+    # Same rule as HTTP::Tiny's timeout above: give up after $timeout s with
     # nothing to read, so a stalled server cannot hang the CLI.
     require IO::Select;
     my $sel  = IO::Select->new($s);
     my $resp = '';
     while (1) {
         return { status => 599, content => "timed out reading from socket $path_sock" }
-            unless $sel->can_read(120);
+            unless $sel->can_read($timeout);
         my $n = sysread($s, my $buf, 65536);
         return { status => 599, content => "read from socket $path_sock failed: $!" }
             unless defined $n;
@@ -837,7 +854,17 @@ sub build_context {
     $url = $DEFAULT_URL unless defined $url || defined $socket;
     $url =~ s{/+$}{} if defined $url;
 
+    # Request timeout (seconds): flag > env > config file > 120. An empty
+    # value counts as unset, as for url.
+    my ($timeout) = grep { defined && length }
+        $opts->{timeout}, $ENV{CTRL_EXEC_TIMEOUT}, $cfg->{timeout};
+    $timeout //= 120;
+    die "Error: timeout must be a positive integer (seconds), got '$timeout'\n"
+        unless $timeout =~ /\A\d+\z/ && $timeout > 0;
+    $timeout += 0;
+
     return {
+        timeout  => $timeout,
         url      => $url // 'http://localhost',
         socket   => $socket,
         ca       => $opts->{ca} // $ENV{CTRL_EXEC_API_CA} // $cfg->{ca},
@@ -920,6 +947,8 @@ Global options:
   --ca <file>         CA certificate to verify an https:// API against
   --token <token>     Auth token (overrides CTRL_EXEC_TOKEN)
   --username <name>   Username (overrides CTRL_EXEC_USERNAME, default: $USER)
+  --timeout <seconds> Wait this long for the API's response (default: 120).
+                      Not for 'wait', where --timeout is its own deadline
   --json              Raw JSON output (applies to all commands)
   --version           Print version and exit
   --help              Print this help and exit
@@ -929,6 +958,7 @@ Config file (~/.ctrl-exec-cli.conf):
   ca       = /etc/ssl/api-ca.crt
   token    = mytoken
   username = alice
+  timeout  = 120
 
 Priority: flag > environment variable > config file > default. For the API
 address, the first source that sets url or socket decides.
@@ -939,6 +969,11 @@ Environment variables:
   CTRL_EXEC_API_CA     CA certificate for an https:// API
   CTRL_EXEC_TOKEN      Auth token
   CTRL_EXEC_USERNAME   Username
+  CTRL_EXEC_TIMEOUT    Seconds to wait for the API's response (default: 120)
+
+A run that takes longer than the timeout is reported as a connection error
+while it carries on; the dispatcher's read_timeout (default 60) and the agent's
+script timeout must be at least as long for a long synchronous run.
 
 Run 'ctrl-exec-cli <command> --help' for command-specific help.
 END

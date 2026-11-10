@@ -78,6 +78,7 @@ url      = http://myhost:7445
 ca       = /etc/ssl/certs/api-ca.crt
 token    = mytoken
 username = alice
+timeout  = 120
 ```
 
 Environment variables:
@@ -88,6 +89,7 @@ CTRL_EXEC_API_SOCKET API unix socket path
 CTRL_EXEC_API_CA     CA certificate for an https:// API
 CTRL_EXEC_TOKEN      Auth token
 CTRL_EXEC_USERNAME   Username (default: $USER)
+CTRL_EXEC_TIMEOUT    Seconds to wait for the API's response (default: 120)
 ```
 
 Global flags (override all other sources):
@@ -98,8 +100,14 @@ Global flags (override all other sources):
 --ca <file>        CA certificate to verify an https:// API
 --token <token>    Auth token
 --username <n>     Username
+--timeout <secs>   Seconds to wait for the API's response (positive integer)
 --json             Raw JSON output for all commands
 ```
+
+`--timeout` is global for every command except `wait`, where `--timeout` is
+`wait`'s own deadline (default 300) and does not change the request timeout;
+to set both, give the global one before the command:
+`ctrl-exec-cli --timeout 600 wait <reqid> --timeout 900`.
 
 Use `CTRL_EXEC_TOKEN` rather than `--token` to prevent the token value
 appearing in `ps` output.
@@ -326,6 +334,10 @@ ctrl-exec-cli run web-01 --script deploy
   exit 1.
 - `discovery` without a host filter queries all registered agents via
   `GET /discovery`. On large fleets this may be slow.
-- The client timeout is 120 seconds. Long-running synchronous jobs that exceed
-  this will be reported as a connection error even if the job completes on the
-  agent. Use `--async` for jobs expected to run longer than two minutes.
+- The client waits 120 seconds for the API's response unless `--timeout`,
+  `CTRL_EXEC_TIMEOUT` or `timeout =` says otherwise (same for `--url` and
+  `--socket`). A synchronous run that outlasts it is reported as a connection
+  error even if it completes on the agent. For a long run raise it, and make
+  sure the dispatcher's `read_timeout` (default 60) and the agent's script
+  timeout are at least as long. `--async` is unavailable when the agent's
+  executor is enabled.
