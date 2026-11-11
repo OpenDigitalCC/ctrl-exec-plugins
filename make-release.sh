@@ -23,11 +23,19 @@
 #
 # Usage:
 #   ./make-release.sh [--auto] [--dry-run] [--category <n>] [--no-deb]
+#   ./make-release.sh --tag
+#   ./make-release.sh --open-next
 #
-#   --auto           Commit, tag, and push without prompting
+#   --auto           Build, commit dist/, tag that commit, open the next
+#                    version in a second commit, and push all of it
+#   --tag            Tag the release: HEAD must be the release commit, i.e.
+#                    its VERSION equals the release and it carries dist/
+#                    for it. Refuses (and tags nothing) otherwise
+#   --open-next      After the tag: bump VERSION to the next patch and commit
+#                    it ("chore: open <next>"). Refuses unless v<VERSION> exists
 #   --dry-run        Show what would be built; no files written, no git changes
 #   --category <n>   Build only one category: ce-agent-plugins, ce-auth-plugins, or ce-api-plugins
-#                    Single-category builds do not bump version or touch git
+#                    Single-category builds do not touch VERSION or git
 #   --no-deb         Skip Debian package builds (tarballs only)
 #
 # Environment:
@@ -41,6 +49,14 @@
 #
 # Reads version from VERSION file in the repo root.
 # Run from the repo root.
+#
+# Release order (the tag must carry the release, not the next version):
+#   1. VERSION holds the version being released; the run builds dist/ from it
+#      and does NOT change VERSION.
+#   2. commit dist/                 -> "release: <version>"
+#   3. --tag                        -> v<version> on that commit
+#   4. --open-next                  -> VERSION = next patch, "chore: open <next>"
+# so `git show v<version>:VERSION` is the release and the tag holds dist/.
 
 set -euo pipefail
 
@@ -65,12 +81,15 @@ AUTO=0
 DRY_RUN=0
 ONLY_CATEGORY=''
 BUILD_DEB=1
+MODE=release
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --auto)      AUTO=1; shift ;;
         --dry-run)   DRY_RUN=1; shift ;;
         --no-deb)    BUILD_DEB=0; shift ;;
+        --tag)       MODE=tag; shift ;;
+        --open-next) MODE=open-next; shift ;;
         --category)  ONLY_CATEGORY="${2:-}"; shift 2 ;;
         --help|-h)
             sed -n '2,/^$/p' "$0" | grep '^#' | sed 's/^# \?//'
@@ -91,6 +110,59 @@ VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 [[ -n "$VERSION" ]] || die "VERSION file is empty."
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
     || die "VERSION must be semver n.n.n, got: $VERSION"
+
+# ---------------------------------------------------------------------------
+# Tag and next-version steps (git only; no build)
+# ---------------------------------------------------------------------------
+
+TAG="v${VERSION}"
+
+# Tag HEAD as the release, but only if HEAD really is the release: clean tree,
+# VERSION at HEAD equals the release, and HEAD carries dist/ for it. Tagging
+# any other commit (the commit before the release commit, or one that already
+# opened the next version) is refused.
+tag_release() {
+    git -C "$REPO_ROOT" rev-parse --git-dir &>/dev/null || die "Not a git repository."
+    git -C "$REPO_ROOT" diff --quiet && git -C "$REPO_ROOT" diff --cached --quiet \
+        || die "Working tree has uncommitted changes. Commit the release first."
+    local at_head
+    at_head="$(git -C "$REPO_ROOT" show HEAD:VERSION 2>/dev/null | tr -d '[:space:]')"
+    [[ "$at_head" == "$VERSION" ]] \
+        || die "Refusing to tag: VERSION at HEAD is '${at_head:-missing}', the release is $VERSION."
+    git -C "$REPO_ROOT" cat-file -e "HEAD:dist/ce-agent-plugins-${VERSION}.tar.gz" 2>/dev/null \
+        || die "Refusing to tag: HEAD has no dist/ for $VERSION. Commit the built dist/ first."
+    if git -C "$REPO_ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+        die "Tag $TAG already exists."
+    fi
+    git -C "$REPO_ROOT" tag -a "$TAG" -m "release: $VERSION"
+    info "Tagged: $TAG ($(git -C "$REPO_ROOT" rev-parse --short HEAD))"
+}
+
+# Bump VERSION to the next patch and commit it. Only after the release is
+# tagged, so the tagged commit keeps the release version.
+open_next() {
+    git -C "$REPO_ROOT" rev-parse -q --verify "refs/tags/$TAG" >/dev/null \
+        || die "Tag $TAG does not exist. Tag the release (--tag) before opening the next version."
+    git -C "$REPO_ROOT" diff --quiet && git -C "$REPO_ROOT" diff --cached --quiet \
+        || die "Working tree has uncommitted changes."
+    local major rest minor patch next
+    major="${VERSION%%.*}"; rest="${VERSION#*.}"; minor="${rest%%.*}"; patch="${rest#*.}"
+    next="${major}.${minor}.$((patch + 1))"
+    echo "$next" > "$VERSION_FILE"
+    git -C "$REPO_ROOT" add VERSION
+    git -C "$REPO_ROOT" commit -q -m "chore: open $next"
+    NEXT_VERSION="$next"
+    info "Opened $next (VERSION: $VERSION -> $next)"
+}
+
+if [[ "$MODE" == tag ]]; then
+    tag_release
+    exit 0
+fi
+if [[ "$MODE" == open-next ]]; then
+    open_next
+    exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # Category definitions
@@ -446,38 +518,22 @@ fi
 if [[ $FULL_RELEASE -eq 0 ]]; then
     info "Done. Artefacts written to dist/"
     [[ ${#BUILT_PKGS[@]} -gt 0 ]] && info "Built ${#BUILT_PKGS[@]} package(s)."
-    info "Version not bumped (single category build)."
+    info "VERSION untouched (single category build)."
     exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# Version bump (patch: n.n.n -> n.n.n+1)
+# Git: commit the release, tag that commit, open the next version
 # ---------------------------------------------------------------------------
+#
+# VERSION is left as the release. The tag goes on the commit that carries
+# dist/, and VERSION moves to the next patch only after the tag (open_next).
 
-MAJOR="${VERSION%%.*}"
-REST="${VERSION#*.}"
-MINOR="${REST%%.*}"
-PATCH="${REST#*.}"
-NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
-echo "$NEXT_VERSION" > "$VERSION_FILE"
-info "VERSION bumped: $VERSION -> $NEXT_VERSION"
-
-# ---------------------------------------------------------------------------
-# Git: tag and optionally commit + push
-# ---------------------------------------------------------------------------
-
-TAG="v${VERSION}"
-
-if git rev-parse "$TAG" &>/dev/null 2>&1; then
-    warn "Tag $TAG already exists - skipping tag creation."
-else
-    git tag -a "$TAG" -m "release: $VERSION"
-    info "Tagged: $TAG"
-fi
+NEXT_VERSION=''
 
 echo ""
 echo "================================================================"
-echo " Release $VERSION complete"
+echo " Release $VERSION built"
 echo "================================================================"
 echo ""
 for dest in "${BUILT[@]}"; do
@@ -490,24 +546,30 @@ for dest in "${BUILT_PKGS[@]}"; do
     echo "  Package:   dist/$pkg"
     echo "  Checksum:  dist/${pkg}.sha256"
 done
-echo "  Tag:       $TAG"
-echo "  Next ver:  $NEXT_VERSION"
 echo ""
 
 if [[ $AUTO -eq 1 ]]; then
-    git add dist/ VERSION
-    git commit -m "release: $VERSION"
-    git push
-    git push origin "$TAG"
-    info "Released and pushed."
+    git -C "$REPO_ROOT" add dist/
+    git -C "$REPO_ROOT" commit -q -m "release: $VERSION"
+    tag_release
+    open_next
+    git -C "$REPO_ROOT" push
+    git -C "$REPO_ROOT" push origin "$TAG"
+    info "Released $VERSION, opened $NEXT_VERSION, pushed."
 else
-    echo "Next steps:"
+    echo "Next steps, in this order:"
     echo ""
-    echo "  1. Review and commit the release:"
-    echo "       git add dist/ VERSION"
+    echo "  1. Commit the release (VERSION stays $VERSION):"
+    echo "       git add dist/"
     echo "       git commit -m 'release: $VERSION'"
     echo ""
-    echo "  2. Push commits and tag:"
+    echo "  2. Tag that commit (refuses unless its VERSION is $VERSION and it has dist/):"
+    echo "       ./make-release.sh --tag"
+    echo ""
+    echo "  3. Open the next version (bumps VERSION, commits 'chore: open ...'):"
+    echo "       ./make-release.sh --open-next"
+    echo ""
+    echo "  4. Push commits and tag:"
     echo "       git push && git push origin $TAG"
     echo ""
 fi

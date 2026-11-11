@@ -311,3 +311,28 @@ with `--socket`, and matches the tree's script. Run it before cutting a
 release. `make-release.sh` stamps the package version into the `our $VERSION`
 line of `ctrl-exec-cli` and `ctrl-exec-mcp` (the tree keeps a `0.0.0-dev`
 placeholder); the build dies if that line is missing.
+
+`tools/test-release-tag.sh` checks the tagging step in throwaway git
+repositories under a temp dir (never the real repo): `--tag` must refuse a
+commit whose `VERSION` is not the release or that lacks `dist/`, and the
+pushed tag must read the release in `VERSION` and carry `dist/`.
+
+
+## Cutting a release
+
+`VERSION` holds the version being released while you cut it. The tag goes on
+the commit that carries `dist/`, so `git show v<version>:VERSION` is the
+release. The next version is opened afterwards, in its own commit.
+
+1. Run both checks: `tools/test-release.sh` and `tools/test-release-tag.sh`.
+2. On a clean tree, build: `./make-release.sh` (builds `dist/`; `VERSION` is
+   not changed).
+3. Commit the release: `git add dist/ && git commit -m 'release: <version>'`.
+4. Tag it: `./make-release.sh --tag`. It refuses unless HEAD's `VERSION` is
+   the release and HEAD carries `dist/` for it.
+5. Open the next version: `./make-release.sh --open-next` (bumps `VERSION` to
+   the next patch and commits `chore: open <next>`). It refuses before the tag.
+6. Push: `git push && git push origin v<version>`.
+
+`./make-release.sh --auto` runs steps 2 to 5 and pushes. A single-category
+build (`--category`) and `--dry-run` touch neither `VERSION` nor git.
