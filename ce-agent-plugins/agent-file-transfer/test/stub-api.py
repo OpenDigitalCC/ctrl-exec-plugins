@@ -16,15 +16,22 @@ POST /run executes the request on this machine:
 Mode "sync" answers with the result inline; mode "async" answers with a
 reqid only and serves the result from GET /status/<reqid>.
 
+Environment:
+  STUB_ADDR    when set, every per-host result carries "addr": <value>, as a
+               0.14.8 dispatcher does (unset: no addr, like an older one)
+  STUB_SOCKET  when set, listen on this unix socket instead of loopback TCP
+               (the port file then holds the word "unix")
+
 Writes its port to the port file once listening.
 Usage: stub-api.py <token> <port-file> <log-file> <receive-script> [sync|async]
 """
-import json, os, subprocess, sys, tempfile, threading
+import json, os, socketserver, subprocess, sys, tempfile, threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN, PORTFILE, LOG, RECV = sys.argv[1:5]
 MODE = sys.argv[5] if len(sys.argv) > 5 else "sync"
 RESULTS, LOCK, SEQ = {}, threading.Lock(), [0]
+ADDR, SOCK = os.environ.get("STUB_ADDR"), os.environ.get("STUB_SOCKET")
 
 
 def log(line):
@@ -78,6 +85,8 @@ class H(BaseHTTPRequestHandler):
             SEQ[0] += 1
             reqid = "r%d" % SEQ[0]
         res = [{"host": body["hosts"][0], "exit": code, "stdout": out, "stderr": err}]
+        if ADDR is not None:
+            res[0]["addr"] = ADDR
         if MODE == "async":
             RESULTS[reqid] = res
             self._send(200, {"ok": True, "reqid": reqid, "mode": "async"})
@@ -95,6 +104,14 @@ class H(BaseHTTPRequestHandler):
                          "complete": True, "results": RESULTS[reqid]})
 
 
-srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
-open(PORTFILE, "w").write(str(srv.server_port))
+class UnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
+
+
+if SOCK:
+    srv = UnixServer(SOCK, H)
+    open(PORTFILE, "w").write("unix")
+else:
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    open(PORTFILE, "w").write(str(srv.server_port))
 srv.serve_forever()

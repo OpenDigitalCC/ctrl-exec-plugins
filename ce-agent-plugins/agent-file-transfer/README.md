@@ -186,11 +186,49 @@ No `scripts.conf` changes in this plugin. Entries are managed by
 --port <n>          Transfer port - must be reachable from sender to receiver (required)
 --timeout <n>       Transfer timeout in seconds (default: 300)
 --api-url <url>     ctrl-exec API base URL (default: $CTRL_EXEC_API_URL)
+--socket <path>     ctrl-exec API unix socket (default: $CTRL_EXEC_API_SOCKET)
 --token <token>     Auth token (default: $CTRL_EXEC_TOKEN)
 --username <n>      Username for auth hook
 ```
 
-Environment variables: `CTRL_EXEC_API_URL`, `CTRL_EXEC_TOKEN`, `CTRL_EXEC_USERNAME`
+Environment variables: `CTRL_EXEC_API_URL`, `CTRL_EXEC_API_SOCKET`,
+`CTRL_EXEC_TOKEN`, `CTRL_EXEC_USERNAME`
+
+### ce-push-blob (dispatcher to one agent)
+
+```
+--host <agent>      Target agent (required)
+--address <addr>    Address to stream to (default: see below)
+--file <path>       Local file to push (required)
+--output <path>     Destination path on the agent (required)
+--port <n>          Transfer port - must be reachable from dispatcher to agent (required)
+--timeout <n>       Transfer timeout in seconds (default: 300)
+--api-url <url>     ctrl-exec API base URL (default: $CTRL_EXEC_API_URL)
+--socket <path>     ctrl-exec API unix socket (default: $CTRL_EXEC_API_SOCKET)
+--token <token>     Auth token (default: $CTRL_EXEC_TOKEN)
+--username <n>      Username for auth hook
+```
+
+Environment variables: as for `ce-file-transfer`.
+
+The tool opens the TLS stream to the agent itself, so it needs an address. It
+uses, in order: `--address`; the `addr` the dispatcher reports in the
+`agent-file-receive` run result (the address it connected to for that agent,
+the registry address for an agent paired by IP, so the agent's name need not
+resolve on the dispatcher host); `--host`, for a dispatcher older than 0.14.8
+that reports no `addr`. A bare IPv6 address is bracketed for `openssl`. The
+`Sending ... to` line shows the address used.
+
+### API URL or unix socket (both coordinators)
+
+`--socket <path>` (or `CTRL_EXEC_API_SOCKET`) reaches the API on its unix
+socket (`api_socket`) instead of a URL; curl is given `--unix-socket`. Use it
+with a dispatcher run socket-only (`api_port = off`), where the caller's uid
+is its identity. The rules are those of `ctrl-exec-cli`: `--api-url` and
+`--socket` together are refused; a flag beats the environment; the first
+source that names a URL or a socket decides, and a socket wins over a URL
+when the environment sets both. With neither, the URL defaults to
+`http://localhost:7445`.
 
 ### agent-file-receive (on the receiving agent)
 

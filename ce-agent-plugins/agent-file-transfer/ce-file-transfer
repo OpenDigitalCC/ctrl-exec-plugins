@@ -18,7 +18,8 @@
 #   - agent-file-transfer installed on the sending agent
 #   - agent-file-receive installed on the receiving agent
 #   - curl and jq installed on the dispatcher host
-#   - CTRL_EXEC_API_URL set (or --api-url provided)
+#   - CTRL_EXEC_API_URL set (or --api-url provided), or the API unix socket
+#     (--socket / CTRL_EXEC_API_SOCKET)
 #
 # Arguments:
 #   --from <agent>      Sending agent hostname (required)
@@ -28,11 +29,17 @@
 #   --port <n>          Transfer port - must be reachable from sender to receiver (required)
 #   --timeout <n>       Transfer timeout in seconds (default: 300)
 #   --api-url <url>     ctrl-exec API base URL (default: $CTRL_EXEC_API_URL)
+#   --socket <path>     ctrl-exec API unix socket (default: $CTRL_EXEC_API_SOCKET);
+#                       mutually exclusive with --api-url. The peer uid is then
+#                       the caller's identity, as with ctrl-exec-cli --socket
 #   --token <token>     Auth token (default: $CTRL_EXEC_TOKEN)
 #   --username <n>      Username (default: $CTRL_EXEC_USERNAME or $USER)
 #
 # Environment:
-#   CTRL_EXEC_API_URL, CTRL_EXEC_TOKEN, CTRL_EXEC_USERNAME
+#   CTRL_EXEC_API_URL, CTRL_EXEC_API_SOCKET, CTRL_EXEC_TOKEN, CTRL_EXEC_USERNAME
+#   --api-url / --socket (flag) beat the environment; the first source that
+#   names a URL or a socket decides, and a socket wins over a URL when the
+#   environment sets both - as in ctrl-exec-cli.
 
 set -euo pipefail
 
@@ -65,10 +72,12 @@ Usage: ce-file-transfer --from <agent> --to <agent> --path <path> --output <path
   --port <n>          Transfer port, must be reachable from sender to receiver (required)
   --timeout <n>       Transfer timeout in seconds (default: 300)
   --api-url <url>     ctrl-exec API base URL
+  --socket <path>     ctrl-exec API unix socket (not with --api-url)
   --token <token>     Auth token
   --username <n>      Username for auth hook
 
-Environment variables: CTRL_EXEC_API_URL, CTRL_EXEC_TOKEN, CTRL_EXEC_USERNAME
+Environment variables: CTRL_EXEC_API_URL, CTRL_EXEC_API_SOCKET, CTRL_EXEC_TOKEN,
+                       CTRL_EXEC_USERNAME
 EOF
     exit 2
 }
@@ -79,7 +88,8 @@ COLLECT_PATH=''
 OUTPUT=''
 TRANSFER_PORT=''
 TIMEOUT=300
-API_URL="${CTRL_EXEC_API_URL:-http://localhost:7445}"
+API_URL=''
+API_SOCKET=''
 TOKEN="${CTRL_EXEC_TOKEN:-}"
 USERNAME="${CTRL_EXEC_USERNAME:-${USER:-}}"
 
@@ -92,6 +102,7 @@ while [[ $# -gt 0 ]]; do
         --port)      TRANSFER_PORT="${2:-}"; shift 2 ;;
         --timeout)   TIMEOUT="${2:-}"; shift 2 ;;
         --api-url)   API_URL="${2:-}"; shift 2 ;;
+        --socket)    API_SOCKET="${2:-}"; shift 2 ;;
         --token)     TOKEN="${2:-}"; shift 2 ;;
         --username)  USERNAME="${2:-}"; shift 2 ;;
         --help|-h)   usage ;;
@@ -106,6 +117,22 @@ done
 [[ -n "$TRANSFER_PORT" ]] || { echo "Error: --port is required" >&2; usage; }
 [[ "$TRANSFER_PORT" =~ ^[0-9]+$ ]] || { echo "Error: --port must be numeric" >&2; exit 2; }
 
+# URL or unix socket, resolved as ctrl-exec-cli does: the flags first, then
+# the environment (a socket wins over a URL there), then the default URL.
+if [[ -n "$API_URL" && -n "$API_SOCKET" ]]; then
+    echo "Error: --api-url and --socket are mutually exclusive" >&2
+    exit 2
+fi
+if [[ -z "$API_URL" && -z "$API_SOCKET" ]]; then
+    API_SOCKET="${CTRL_EXEC_API_SOCKET:-}"
+    [[ -n "$API_SOCKET" ]] || API_URL="${CTRL_EXEC_API_URL:-http://localhost:7445}"
+fi
+# curl takes the socket as --unix-socket; the URL host is then a placeholder.
+CURL_API=()
+if [[ -n "$API_SOCKET" ]]; then
+    CURL_API=(--unix-socket "$API_SOCKET")
+    API_URL="http://localhost"
+fi
 API_URL="${API_URL%/}"
 
 # ---------------------------------------------------------------------------
@@ -114,7 +141,7 @@ API_URL="${API_URL%/}"
 
 api_run() {
     local request="$1"
-    curl -s -X POST "${API_URL}/run" \
+    curl -s ${CURL_API[@]+"${CURL_API[@]}"} -X POST "${API_URL}/run" \
         -H 'Content-Type: application/json' \
         -d "$request"
 }
@@ -122,7 +149,7 @@ api_run() {
 api_status() {
     local reqid="$1"
     # The API reads the status token from the Authorization header, not the body.
-    curl -s -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/${reqid}"
+    curl -s ${CURL_API[@]+"${CURL_API[@]}"} -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/${reqid}"
 }
 
 # await_result <response> <reqid> <limit>

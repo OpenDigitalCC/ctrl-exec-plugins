@@ -1,5 +1,5 @@
 # Test report: agent-file-transfer (ce-agent-plugins)
-Generated: 2026-10-20T14:23:09Z
+Generated: 2026-11-17T09:10:10Z
 
   PASS  no args -> exit 2 (--port required)
   PASS  missing --output -> exit 2
@@ -55,7 +55,26 @@ Generated: 2026-10-20T14:23:09Z
   PASS  ce-file-transfer confirms receipt through --status (async)
   PASS  ce-file-transfer confirms through the --status run call (async)
   PASS  ce-file-transfer sends no tokenless status poll (async)
+  PASS  push streams to the run result's addr, not the unresolvable --host
+  PASS  the Sending line shows the address used
+  PASS  file pushed via addr arrives intact
+  PASS  no addr in the run result (older dispatcher): falls back to --host
+  PASS  the fallback Sending line shows --host
+  PASS  --address overrides the run result's addr
+  PASS  the Sending line shows the --address value
+  PASS  an IPv6 addr is bracketed for the stream
+  PASS  ce-push-blob --socket completes end to end
+  PASS  ce-push-blob --socket confirms receipt
+  PASS  file pushed over the socket arrives intact
+  PASS  CTRL_EXEC_API_SOCKET is honoured (and beats CTRL_EXEC_API_URL)
+  PASS  --socket beats CTRL_EXEC_API_URL
+  PASS  ce-file-transfer --socket completes end to end
+  PASS  ce-file-transfer --socket confirms receipt
+  PASS  ce-push-blob --api-url with --socket is refused (exit 2)
+  PASS  ce-push-blob names the conflict
+  PASS  ce-file-transfer --api-url with --socket is refused (exit 2)
+  PASS  ce-file-transfer names the conflict
   PASS  ce-push-blob with a wrong token fails
 
-Results: 55 passed, 0 failed
+Results: 74 passed, 0 failed
 VERDICT: PASS

@@ -12,21 +12,30 @@
 #     (the same script answers the --status call; no second entry is needed)
 #   - the receiver's profile must let it write the output directory
 #   - curl and jq installed on the dispatcher host
-#   - CTRL_EXEC_API_URL set (or --api-url provided)
+#   - CTRL_EXEC_API_URL set (or --api-url provided), or the API unix socket
+#     (--socket / CTRL_EXEC_API_SOCKET)
 #   - CTRL_EXEC_TOKEN set if auth is configured (or --token provided)
 #
 # Arguments:
 #   --host <agent>      Target agent hostname (required)
+#   --address <addr>    Address to stream to (default: the address the dispatcher
+#                       connected to for the agent, from the run result; else --host)
 #   --file <path>       Local file to push (required)
 #   --output <path>     Destination path on the agent (required)
 #   --port <n>          Transfer port - must be reachable from dispatcher to agent (required)
 #   --timeout <n>       Transfer timeout in seconds (default: 300)
 #   --api-url <url>     ctrl-exec API base URL (default: $CTRL_EXEC_API_URL)
+#   --socket <path>     ctrl-exec API unix socket (default: $CTRL_EXEC_API_SOCKET);
+#                       mutually exclusive with --api-url. The peer uid is then
+#                       the caller's identity, as with ctrl-exec-cli --socket
 #   --token <token>     Auth token (default: $CTRL_EXEC_TOKEN)
 #   --username <n>      Username (default: $CTRL_EXEC_USERNAME or $USER)
 #
 # Environment:
-#   CTRL_EXEC_API_URL, CTRL_EXEC_TOKEN, CTRL_EXEC_USERNAME
+#   CTRL_EXEC_API_URL, CTRL_EXEC_API_SOCKET, CTRL_EXEC_TOKEN, CTRL_EXEC_USERNAME
+#   --api-url / --socket (flag) beat the environment; the first source that
+#   names a URL or a socket decides, and a socket wins over a URL when the
+#   environment sets both - as in ctrl-exec-cli.
 
 set -euo pipefail
 
@@ -54,36 +63,44 @@ usage() {
 Usage: ce-push-blob --host <agent> --file <path> --output <path> --port <n> [options]
 
   --host <agent>      Target agent hostname (required)
+  --address <addr>    Address to stream to (default: the address the dispatcher
+                      connected to for the agent; else --host)
   --file <path>       Local file to push to the agent (required)
   --output <path>     Destination path on the agent (required)
   --port <n>          Transfer port, must be reachable from dispatcher to agent (required)
   --timeout <n>       Transfer timeout in seconds (default: 300)
   --api-url <url>     ctrl-exec API base URL
+  --socket <path>     ctrl-exec API unix socket (not with --api-url)
   --token <token>     Auth token
   --username <n>      Username for auth hook
 
-Environment variables: CTRL_EXEC_API_URL, CTRL_EXEC_TOKEN, CTRL_EXEC_USERNAME
+Environment variables: CTRL_EXEC_API_URL, CTRL_EXEC_API_SOCKET, CTRL_EXEC_TOKEN,
+                       CTRL_EXEC_USERNAME
 EOF
     exit 2
 }
 
 AGENT_HOST=''
+ADDRESS=''
 SOURCE_FILE=''
 OUTPUT=''
 TRANSFER_PORT=''
 TIMEOUT=300
-API_URL="${CTRL_EXEC_API_URL:-http://localhost:7445}"
+API_URL=''
+API_SOCKET=''
 TOKEN="${CTRL_EXEC_TOKEN:-}"
 USERNAME="${CTRL_EXEC_USERNAME:-${USER:-}}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --host)      AGENT_HOST="${2:-}"; shift 2 ;;
+        --address)   ADDRESS="${2:-}"; shift 2 ;;
         --file)      SOURCE_FILE="${2:-}"; shift 2 ;;
         --output)    OUTPUT="${2:-}"; shift 2 ;;
         --port)      TRANSFER_PORT="${2:-}"; shift 2 ;;
         --timeout)   TIMEOUT="${2:-}"; shift 2 ;;
         --api-url)   API_URL="${2:-}"; shift 2 ;;
+        --socket)    API_SOCKET="${2:-}"; shift 2 ;;
         --token)     TOKEN="${2:-}"; shift 2 ;;
         --username)  USERNAME="${2:-}"; shift 2 ;;
         --help|-h)   usage ;;
@@ -98,14 +115,23 @@ done
 [[ -f "$SOURCE_FILE" ]]   || { echo "Error: File not found: $SOURCE_FILE" >&2; exit 1; }
 [[ "$TRANSFER_PORT" =~ ^[0-9]+$ ]] || { echo "Error: --port must be numeric" >&2; exit 2; }
 
+# URL or unix socket, resolved as ctrl-exec-cli does: the flags first, then
+# the environment (a socket wins over a URL there), then the default URL.
+if [[ -n "$API_URL" && -n "$API_SOCKET" ]]; then
+    echo "Error: --api-url and --socket are mutually exclusive" >&2
+    exit 2
+fi
+if [[ -z "$API_URL" && -z "$API_SOCKET" ]]; then
+    API_SOCKET="${CTRL_EXEC_API_SOCKET:-}"
+    [[ -n "$API_SOCKET" ]] || API_URL="${CTRL_EXEC_API_URL:-http://localhost:7445}"
+fi
+# curl takes the socket as --unix-socket; the URL host is then a placeholder.
+CURL_API=()
+if [[ -n "$API_SOCKET" ]]; then
+    CURL_API=(--unix-socket "$API_SOCKET")
+    API_URL="http://localhost"
+fi
 API_URL="${API_URL%/}"
-
-# ---------------------------------------------------------------------------
-# Resolve agent host address
-# ---------------------------------------------------------------------------
-
-# For push, dispatcher connects to the agent - use the agent hostname directly
-AGENT_ADDR="$AGENT_HOST"
 
 # ---------------------------------------------------------------------------
 # Temp files and cleanup
@@ -124,14 +150,14 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 
 api_run() {
-    curl -s -X POST "${API_URL}/run" \
+    curl -s ${CURL_API[@]+"${CURL_API[@]}"} -X POST "${API_URL}/run" \
         -H 'Content-Type: application/json' \
         -d "$1"
 }
 
 # The API reads the status token from the Authorization header, not the body.
 api_status() {
-    curl -s -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/$1"
+    curl -s ${CURL_API[@]+"${CURL_API[@]}"} -H "Authorization: Bearer ${TOKEN}" "${API_URL}/status/$1"
 }
 
 # await_result <response> <reqid> <limit>
@@ -216,6 +242,17 @@ if [[ "$RECV_EXIT" != "0" || -z "$FINGERPRINT" || -z "$TRANSFER_ID" ]]; then
 fi
 
 echo "==> Agent receiver ready. Fingerprint: $FINGERPRINT"
+
+# The address to stream to: --address, else the address the dispatcher
+# connected to for this agent (the run result's addr; an agent paired by IP
+# need not resolve by name here), else --host (a dispatcher before 0.14.8
+# sends no addr). A bare IPv6 address is bracketed for openssl -connect.
+AGENT_ADDR="$ADDRESS"
+[[ -n "$AGENT_ADDR" ]] || AGENT_ADDR=$(echo "$RESPONSE" | jq -r '.results[0].addr // ""')
+[[ -n "$AGENT_ADDR" ]] || AGENT_ADDR="$AGENT_HOST"
+if [[ "$AGENT_ADDR" == *:* && "$AGENT_ADDR" != \[* ]]; then
+    AGENT_ADDR="[${AGENT_ADDR}]"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 3: Stream file to agent via TLS with fingerprint verification

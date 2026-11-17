@@ -170,6 +170,14 @@ if [ "$have_all" = 1 ]; then
     for _ in $(seq 1 100); do [ -s "$W/port" ] && break; sleep 0.1; done
     API="http://127.0.0.1:$(cat "$W/port" 2>/dev/null)"
   }
+  # start_sock_stub <addr>: the same stub on a unix socket (addr "-": send none)
+  start_sock_stub(){
+    : > "$W/log"; rm -f "$W/port" "$W/api.sock"
+    if [ "$1" = "-" ]; then unset STUB_ADDR; else export STUB_ADDR="$1"; fi
+    STUB_SOCKET="$W/api.sock" python3 "$DIR/test/stub-api.py" sekrit "$W/port" "$W/log" "$RECV" sync & STUB=$!
+    unset STUB_ADDR
+    for _ in $(seq 1 100); do [ -s "$W/port" ] && break; sleep 0.1; done
+  }
   stop_stub(){ kill "$STUB" 2>/dev/null; wait "$STUB" 2>/dev/null; }
 
   for mode in sync async; do
@@ -204,6 +212,79 @@ if [ "$have_all" = 1 ]; then
     ok "ce-file-transfer sends no tokenless status poll ($mode)" 0 "$bare"
     stop_stub
   done
+
+  # --- where the stream goes: --address > run result addr > --host ----------
+  # The host name below never resolves; only an address can reach the receiver.
+  NOHOST=agent-01.invalid
+  push_via(){ # <label> <stub addr or -> <host> [extra ce-push-blob args]
+    local label="$1" saddr="$2" host="$3"; shift 3
+    if [ "$saddr" = "-" ]; then unset STUB_ADDR; else export STUB_ADDR="$saddr"; fi
+    start_stub sync
+    unset STUB_ADDR
+    P="$(freeport)"; PORTS="$PORTS|$P"; O="$W/addr-$label/p.tar.gz"
+    out="$(CTRL_EXEC_API_URL=$API CTRL_EXEC_TOKEN=sekrit timeout 60 "$DIR/ce-push-blob" \
+        --host "$host" --file "$W/a.tar.gz" --output "$O" --port "$P" --timeout 60 "$@" 2>&1)"; rc=$?
+    stop_stub
+  }
+  push_via addr 127.0.0.1 "$NOHOST"
+  ok "push streams to the run result's addr, not the unresolvable --host" 0 "$rc"
+  case "$out" in *"Sending $W/a.tar.gz to 127.0.0.1:$P"*) r=shown;; *) r="missing: $out";; esac
+  ok "the Sending line shows the address used" shown "$r"
+  cmp -s "$W/a.tar.gz" "$O" && r=same || r=differs
+  ok "file pushed via addr arrives intact" same "$r"
+
+  push_via none - 127.0.0.1
+  ok "no addr in the run result (older dispatcher): falls back to --host" 0 "$rc"
+  case "$out" in *"Sending $W/a.tar.gz to 127.0.0.1:$P"*) r=shown;; *) r="missing: $out";; esac
+  ok "the fallback Sending line shows --host" shown "$r"
+
+  push_via override 192.0.2.1 "$NOHOST" --address 127.0.0.1
+  ok "--address overrides the run result's addr" 0 "$rc"
+  case "$out" in *"to 127.0.0.1:$P"*) r=shown;; *) r="missing: $out";; esac
+  ok "the Sending line shows the --address value" shown "$r"
+
+  # IPv6 literal: bracketed for openssl; the connect itself is attempted only
+  # where the loopback has ::1 (the Sending line proves the bracketing).
+  push_via v6 ::1 "$NOHOST"
+  case "$out" in *"to [::1]:$P"*) r=bracketed;; *) r="missing: $out";; esac
+  ok "an IPv6 addr is bracketed for the stream" bracketed "$r"
+
+  # --- the API over a unix socket (--socket / CTRL_EXEC_API_SOCKET) ---------
+  start_sock_stub 127.0.0.1
+  P="$(freeport)"; PORTS="$PORTS|$P"; O="$W/sock/p1.tar.gz"
+  out="$(CTRL_EXEC_TOKEN=sekrit timeout 60 "$DIR/ce-push-blob" --socket "$W/api.sock" \
+      --host "$NOHOST" --file "$W/a.tar.gz" --output "$O" --port "$P" --timeout 60 2>&1)"; rc=$?
+  ok "ce-push-blob --socket completes end to end" 0 "$rc"
+  case "$out" in *"Recvd:   $ASIZE bytes"*) r=confirmed;; *) r="unconfirmed: $out";; esac
+  ok "ce-push-blob --socket confirms receipt" confirmed "$r"
+  cmp -s "$W/a.tar.gz" "$O" && r=same || r=differs
+  ok "file pushed over the socket arrives intact" same "$r"
+
+  P="$(freeport)"; PORTS="$PORTS|$P"; O="$W/sock/p2.tar.gz"
+  CTRL_EXEC_API_SOCKET="$W/api.sock" CTRL_EXEC_API_URL=http://127.0.0.1:1 CTRL_EXEC_TOKEN=sekrit \
+      timeout 60 "$DIR/ce-push-blob" --host "$NOHOST" --file "$W/a.tar.gz" --output "$O" --port "$P" >/dev/null 2>&1
+  ok "CTRL_EXEC_API_SOCKET is honoured (and beats CTRL_EXEC_API_URL)" 0 $?
+
+  P="$(freeport)"; PORTS="$PORTS|$P"; O="$W/sock/p3.tar.gz"
+  CTRL_EXEC_API_URL=http://127.0.0.1:1 CTRL_EXEC_TOKEN=sekrit timeout 60 "$DIR/ce-push-blob" \
+      --socket "$W/api.sock" --host "$NOHOST" --file "$W/a.tar.gz" --output "$O" --port "$P" >/dev/null 2>&1
+  ok "--socket beats CTRL_EXEC_API_URL" 0 $?
+
+  P="$(freeport)"; PORTS="$PORTS|$P"; O="$W/sock/x1.tar.gz"
+  out="$(CTRL_EXEC_TOKEN=sekrit timeout 60 "$DIR/ce-file-transfer" --socket "$W/api.sock" \
+      --from sender --to 127.0.0.1 --path /p --output "$O" --port "$P" --timeout 60 2>&1)"; rc=$?
+  ok "ce-file-transfer --socket completes end to end" 0 "$rc"
+  case "$out" in *"Transfer complete"*"Recvd:   "[0-9]*" bytes"*) r=complete;; *) r="stalled: $out";; esac
+  ok "ce-file-transfer --socket confirms receipt" complete "$r"
+
+  for c in ce-push-blob ce-file-transfer; do
+    if [ "$c" = ce-push-blob ]; then req=(--host h --file "$W/a.tar.gz"); else req=(--from a --to b --path /p); fi
+    out="$("$DIR/$c" "${req[@]}" --output /o --port 9 --api-url http://127.0.0.1:1 --socket "$W/api.sock" 2>&1)"; rc=$?
+    ok "$c --api-url with --socket is refused (exit 2)" 2 "$rc"
+    case "$out" in *"--api-url and --socket are mutually exclusive"*) r=named;; *) r="$out";; esac
+    ok "$c names the conflict" named "$r"
+  done
+  stop_stub
 
   # wrong token: refused at /run, no listener left behind
   start_stub sync
